@@ -1,0 +1,164 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  user_id      Int       @id @default(autoincrement())
+  username     String    @unique
+  password     String
+  role         String    @default("USER")
+  division     String?
+  dco          String?   @default("Guwahati")
+  permitted_type String  @default("ALL") // "MACHINE", "NETWORK", "PRINTER", or "ALL"
+  created_by   Int?      
+  created_by_name String?
+  created_at   DateTime  @default(now())
+  modified_by  Int?
+  modified_by_name String?
+  modified_at  DateTime  @updatedAt
+
+  creator      User?     @relation("UserCreator", fields: [created_by], references: [user_id], onDelete: SetNull)
+  created_users User[]   @relation("UserCreator")
+  
+  modifier     User?     @relation("UserModifier", fields: [modified_by], references: [user_id], onDelete: SetNull)
+  modified_users User[]  @relation("UserModifier")
+
+  inventory_created Inventory[] @relation("InventoryCreator")
+  machines_created  Machine[]   @relation("MachineCreator")
+  networks_created  Network[]   @relation("NetworkCreator")
+  printers_created  Printer[]   @relation("PrinterCreator")
+  servers_created   Server[]    @relation("ServerCreator")
+  tickets           Ticket[]    @relation("TicketCreator")
+}
+
+model Inventory {
+  id           Int       @id @default(autoincrement())
+  asset_tag    String    @unique
+  type         String    // "MACHINE", "NETWORK", "PRINTER"
+  created_by   Int?
+  created_by_name String?
+  created_at   DateTime  @default(now())
+  
+  creator      User?     @relation("InventoryCreator", fields: [created_by], references: [user_id], onDelete: SetNull)
+
+  machine      Machine?
+  network      Network?
+  printer      Printer?
+  server       Server?
+}
+
+model Machine {
+  id              Int       @id @default(autoincrement())
+  inventory_id    Int       @unique
+  inventory       Inventory @relation(fields: [inventory_id], references: [id], onDelete: Cascade)
+  
+  asset_tag       String    @unique
+  subtype         String    @default("Workstation") // Workstation, Switch, Router, Mux
+  switch_type     String?   // Core Switch, Access Switch
+  
+  manufacturer    String
+  model_name      String
+  
+  // Hardware (mostly for Workstation)
+  cpu_serial      String?
+  monitor_serial  String?
+  keyboard_serial String?
+  mouse_serial    String?
+  processor       String?
+  ram             String?
+  storage         String?
+  
+  // Network (for Switch, Router, Mux)
+  ip_address      String?
+  mac_address     String?
+  vlan            String?
+  
+  location        String?
+  assigned_to     String?
+  
+  created_by      Int?
+  created_at      DateTime  @default(now())
+  creator         User?     @relation("MachineCreator", fields: [created_by], references: [user_id], onDelete: SetNull)
+}
+
+model Network {
+  id              Int       @id @default(autoincrement())
+  inventory_id    Int       @unique
+  inventory       Inventory @relation(fields: [inventory_id], references: [id], onDelete: Cascade)
+  
+  asset_tag       String    @unique
+  manufacturer    String
+  model_name      String
+  ip_address      String?
+  assigned_to     String?
+  
+  created_by      Int?
+  created_at      DateTime  @default(now())
+  creator         User?     @relation("NetworkCreator", fields: [created_by], references: [user_id], onDelete: SetNull)
+}
+
+model Printer {
+  id              Int       @id @default(autoincrement())
+  inventory_id    Int       @unique
+  inventory       Inventory @relation(fields: [inventory_id], references: [id], onDelete: Cascade)
+  
+  asset_tag       String    @unique
+  manufacturer    String
+  model_name      String
+  assigned_to     String?
+  location        String?
+  
+  created_by      Int?
+  created_at      DateTime  @default(now())
+  creator         User?     @relation("PrinterCreator", fields: [created_by], references: [user_id], onDelete: SetNull)
+}
+
+model Server {
+  id              Int       @id @default(autoincrement())
+  inventory_id    Int       @unique
+  inventory       Inventory @relation(fields: [inventory_id], references: [id], onDelete: Cascade)
+  
+  asset_tag       String    @unique
+  
+  // Hardware
+  host_name       String
+  form_factor     String?   // Blade, Rack-mounted (1U, 2U, etc.), Tower
+  cpu_core_count  String?
+  ram_capacity    String?
+  storage_config  String?
+  
+  // Network
+  ip_address      String?
+  mac_address     String?
+  subnet_vlan     String?
+  gateway_dns     String?
+  open_ports      String?
+  
+  // Software
+  os              String?
+  kernel_version  String?
+  env_tag         String?   // Production, Staging, Development
+  role_service    String?   // e.g. Database, Web Server, Active Directory
+  
+  created_by      Int?
+  created_at      DateTime  @default(now())
+  creator         User?     @relation("ServerCreator", fields: [created_by], references: [user_id], onDelete: SetNull)
+}
+
+model Ticket {
+  id                Int       @id @default(autoincrement())
+  asset_tag         String?   // Link to an asset
+  issue_description String    @db.Text
+  issue_type        String    // H/W or S/W
+  status            String    @default("Open") // Open, In Progress, Closed
+  created_at        DateTime  @default(now())
+  resolved_at       DateTime?
+  
+  created_by        Int
+  creator           User      @relation("TicketCreator", fields: [created_by], references: [user_id])
+}
