@@ -1,8 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { 
-  createColumnHelper, 
-  flexRender, 
-  getCoreRowModel, 
+import {
+  createColumnHelper,
+  flexRender,
+  getCoreRowModel,
   useReactTable,
   getSortedRowModel,
   getPaginationRowModel,
@@ -11,13 +11,14 @@ import {
 import { useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
-import { ArrowUpDown, Plus, X, Edit, Trash2, Upload, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download as DownloadIcon } from 'lucide-react';
+import { ArrowUpDown, Plus, X, Edit, Trash2, Upload, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download as DownloadIcon, FileText } from 'lucide-react';
 import { format } from 'date-fns';
 import BulkUploadModal from '../components/BulkUploadModal';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Download } from 'lucide-react';
+
+
 
 type InventoryItem = {
   id: number;
@@ -28,6 +29,8 @@ type InventoryItem = {
   manufacturer: string;
   model_name: string;
   created_at: string;
+  modified_at: string;
+  bill_url?: string;
   creator_name?: string;
   cpu_serial?: string;
   monitor_serial?: string;
@@ -53,6 +56,7 @@ type InventoryItem = {
   kernel_version?: string;
   env_tag?: string;
   role_service?: string;
+  serial_number?: string; // For Server and Printer
 };
 
 const columnHelper = createColumnHelper<InventoryItem>();
@@ -63,26 +67,27 @@ export default function Assets() {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
-  
+
   const activeTab = searchParams.get('tab') || 'ALL';
   const setActiveTab = (tab: string) => {
     setSearchParams({ tab });
   };
-  
+
   const [assetType, setAssetType] = useState('MACHINE');
   const [formData, setFormData] = useState<any>({});
-  
+  const [billFile, setBillFile] = useState<File | null>(null);
+
   const [editMode, setEditMode] = useState(false);
   const [editItemId, setEditItemId] = useState<number | null>(null);
-  const [error, setError] = useState('');
+
 
   const userStr = sessionStorage.getItem('user');
   const user = userStr ? JSON.parse(userStr) : null;
-  
+
   // Admin check (now includes SUPERADMIN)
   const role = user?.role?.toUpperCase();
   const isAdmin = role === 'ADMIN' || role === 'SUPERADMIN';
-  
+
   // Extremely strict check for permitted type to avoid accidental "ALL" access
   const permittedType = (user?.permitted_type || user?.permittedType || 'NONE').toUpperCase();
 
@@ -90,13 +95,14 @@ export default function Assets() {
   const canManageType = (type: string) => {
     // SuperAdmin can manage everything
     if (role === 'SUPERADMIN') return true;
-    
+
     // Admins and Users with specific permitted_type can manage that type
-    if (permittedType === 'ALL') return isAdmin; 
+    if (permittedType === 'ALL') return isAdmin;
     return type.toUpperCase() === permittedType;
   };
 
-  const canEditInventory = role === 'SUPERADMIN' || isAdmin || (permittedType !== 'NONE' && permittedType !== 'ALL'); 
+  // SUPERADMIN is now view-only
+  const canEditInventory = role === 'ADMIN' || (permittedType !== 'NONE' && permittedType !== 'ALL');
 
   const { data: assets, isLoading } = useQuery({
     queryKey: ['assets'],
@@ -113,7 +119,6 @@ export default function Assets() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['assets'] });
-      closeModal();
     }
   });
 
@@ -124,7 +129,6 @@ export default function Assets() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['assets'] });
-      closeModal();
     }
   });
 
@@ -137,24 +141,52 @@ export default function Assets() {
     }
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Submitting asset:', { type: assetType, ...formData });
-    if (editMode && editItemId) {
-      updateMutation.mutate({
-        id: editItemId,
-        asset: { type: assetType, ...formData }
-      });
-    } else {
-      createMutation.mutate({
-        type: assetType,
-        ...formData
-      });
+
+    // Auto-generate asset_tag if missing
+    const submissionData = { ...formData };
+    if (!submissionData.asset_tag) {
+      submissionData.asset_tag = `ASSET-${Date.now()}`;
+    }
+    if (!submissionData.model_name) {
+      submissionData.model_name = 'Generic';
+    }
+
+    console.log('Submitting asset:', { type: assetType, ...submissionData });
+    
+    let savedAsset;
+    try {
+      if (editMode && editItemId) {
+        savedAsset = await updateMutation.mutateAsync({
+          id: editItemId,
+          asset: { type: assetType, ...submissionData }
+        });
+      } else {
+        savedAsset = await createMutation.mutateAsync({
+          type: assetType,
+          ...submissionData
+        });
+      }
+
+      // Upload bill if file selected
+      if (billFile && savedAsset?.id) {
+        const formData = new FormData();
+        formData.append('bill', billFile);
+        await api.post(`/assets/${savedAsset.id}/bill`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
+      }
+      
+      queryClient.invalidateQueries({ queryKey: ['assets'] });
+      closeModal();
+    } catch (err) {
+      console.error('Submit error:', err);
+      alert('Failed to save asset or upload bill.');
     }
   };
 
   const openAddModal = () => {
-    setError('');
     if (permittedType && permittedType !== 'ALL') {
       setAssetType(permittedType);
     }
@@ -180,10 +212,10 @@ export default function Assets() {
 
   const closeModal = () => {
     setIsModalOpen(false);
-    setFormData({});
     setEditMode(false);
     setEditItemId(null);
-    setError('');
+    setFormData({});
+    setBillFile(null);
   };
 
   const handleTypeChange = (e: any) => {
@@ -197,14 +229,7 @@ export default function Assets() {
 
   const columns = useMemo(() => {
     const baseColumns = [
-      columnHelper.accessor('asset_tag', {
-        header: ({ column }) => (
-          <button className="flex items-center hover:text-foreground" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>
-            Tag ID <ArrowUpDown className="ml-2 h-4 w-4" />
-          </button>
-        ),
-        cell: info => <span className="font-medium">{info.getValue()}</span>,
-      }),
+
       columnHelper.accessor('type', {
         header: 'Type',
         cell: info => {
@@ -215,10 +240,10 @@ export default function Assets() {
           if (type === 'NETWORK') color = 'bg-purple-500/10 text-purple-600 dark:text-purple-400';
           if (type === 'PRINTER') color = 'bg-green-500/10 text-green-600 dark:text-green-400';
           if (type === 'SERVER') color = 'bg-orange-500/10 text-orange-600 dark:text-orange-400';
-          
+
           return (
             <div className="flex flex-col">
-              <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full w-fit ${color}`}>{type}</span>
+              <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full w-fit ${color}`}>{type === 'NETWORK' ? 'STORAGE' : type}</span>
               {type === 'MACHINE' && item.subtype && (
                 <span className="text-[10px] text-muted-foreground mt-0.5 ml-1">
                   {item.subtype}{item.switch_type ? ` (${item.switch_type})` : ''}
@@ -228,14 +253,9 @@ export default function Assets() {
           );
         }
       }),
-      columnHelper.accessor('model_name', {
-        header: 'Model',
-        cell: info => (
-          <div>
-            <p className="font-medium text-foreground">{info.getValue() || '-'}</p>
-            <p className="text-xs text-muted-foreground">{info.row.original.manufacturer || '-'}</p>
-          </div>
-        ),
+      columnHelper.accessor('manufacturer', {
+        header: 'Manufacturer',
+        cell: info => <span className="text-foreground">{info.getValue() || '-'}</span>,
       }),
       columnHelper.display({
         id: 'hardware',
@@ -243,21 +263,39 @@ export default function Assets() {
         cell: info => {
           const item = info.row.original;
           if (item.type === 'MACHINE') {
+            if (item.subtype === 'UPS') {
+              return (
+                <div className="text-xs space-y-0.5">
+                  <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">S/N:</span> {item.cpu_serial || '-'}</p>
+                </div>
+              );
+            }
             if (item.subtype !== 'Workstation') return '-';
             return (
               <div className="text-xs space-y-0.5">
                 <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">CPU:</span> {item.processor || '-'}</p>
                 <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">RAM:</span> {item.ram || '-'}</p>
                 <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">Disk:</span> {item.storage || '-'}</p>
+                <div className="pt-1 mt-1 border-t border-border/50">
+                  <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">Monitor:</span> {item.monitor_serial || '-'}</p>
+                  <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">Keyboard:</span> {item.keyboard_serial || '-'}</p>
+                  <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">Mouse:</span> {item.mouse_serial || '-'}</p>
+                </div>
               </div>
             );
           }
           if (item.type === 'SERVER') {
             return (
               <div className="text-xs space-y-0.5">
-                <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">CPU:</span> {item.cpu_core_count || '-'} Cores</p>
-                <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">RAM:</span> {item.ram_capacity || '-'}</p>
-                <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">Disk:</span> {item.storage_config || '-'}</p>
+                <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">S/N:</span> {item.serial_number || '-'}</p>
+                <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">OS:</span> {item.os || '-'}</p>
+              </div>
+            );
+          }
+          if (item.type === 'PRINTER') {
+            return (
+              <div className="text-xs space-y-0.5">
+                <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">S/N:</span> {item.serial_number || '-'}</p>
               </div>
             );
           }
@@ -278,12 +316,12 @@ export default function Assets() {
             );
             return (
               <div className="text-xs space-y-0.5">
-                <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">IP:</span> {item.ip_address || '-'}</p>
-                <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">VLAN:</span> {item.vlan || '-'}</p>
+                <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">Loc:</span> {item.location || '-'}</p>
+                <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">Asgn:</span> {item.assigned_to || '-'}</p>
               </div>
             );
           }
-          if (item.type === 'NETWORK') return <span className="text-sm text-muted-foreground">{item.ip_address || 'No IP'}</span>;
+          if (item.type === 'NETWORK') return <span className="text-sm text-muted-foreground">{item.ip_address || 'No S/N'}</span>;
           if (item.type === 'PRINTER') return (
             <div className="text-xs space-y-0.5">
               <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">Loc:</span> {item.location || '-'}</p>
@@ -292,16 +330,41 @@ export default function Assets() {
           );
           if (item.type === 'SERVER') return (
             <div className="text-xs space-y-0.5">
-              <p><span className="text-muted-foreground">Host:</span> {item.host_name || '-'}</p>
-              <p><span className="text-muted-foreground">IP:</span> {item.ip_address || '-'}</p>
+              <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">Loc:</span> {item.location || '-'}</p>
+              <p><span className="text-muted-foreground font-semibold uppercase tracking-wider text-[10px]">Asgn:</span> {item.assigned_to || '-'}</p>
             </div>
           );
           return '-';
         }
       }),
+      columnHelper.display({
+        id: 'bill',
+        header: 'Bill',
+        cell: info => {
+          const url = info.row.original.bill_url;
+          if (!url) return <span className="text-muted-foreground italic text-[10px]">No Bill</span>;
+          
+          const fullUrl = `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}${url}`;
+          return (
+            <a 
+              href={fullUrl} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="p-1.5 bg-primary/10 text-primary rounded-lg hover:bg-primary/20 transition-colors flex items-center justify-center w-fit"
+              title="View Bill"
+            >
+              <FileText className="w-4 h-4" />
+            </a>
+          );
+        }
+      }),
       columnHelper.accessor('created_at', {
         header: 'Created',
-        cell: info => info.getValue() ? format(new Date(info.getValue()), 'MMM d, yyyy') : '-',
+        cell: info => info.getValue() ? format(new Date(info.getValue()), 'MMM d, yyyy HH:mm:ss') : '-',
+      }),
+      columnHelper.accessor('modified_at', {
+        header: 'Last Modified',
+        cell: info => info.getValue() ? format(new Date(info.getValue()), 'MMM d, HH:mm:ss') : '-',
       }),
       columnHelper.accessor('creator_name', {
         header: 'Added By',
@@ -309,8 +372,8 @@ export default function Assets() {
       })
     ];
 
-    // Actions column for Admins
-    if (isAdmin) {
+    // Actions column only for Admins (SuperAdmin is view-only)
+    if (role === 'ADMIN') {
       baseColumns.push(
         columnHelper.display({
           id: 'actions',
@@ -318,7 +381,7 @@ export default function Assets() {
           cell: info => {
             const item = info.row.original;
             if (!canManageType(item.type)) return null;
-            
+
             return (
               <div className="flex items-center space-x-2">
                 <button onClick={() => handleEdit(item)} className="p-1 text-muted-foreground hover:text-blue-600 dark:hover:text-blue-400 transition-colors" title="Edit">
@@ -333,7 +396,7 @@ export default function Assets() {
         })
       );
     }
-    
+
     return baseColumns;
   }, [isAdmin, permittedType]);
 
@@ -361,16 +424,31 @@ export default function Assets() {
   const exportToExcel = () => {
     const dataToExport = table.getRowModel().rows.map(row => {
       const item = row.original;
-      return {
+      const exportRow: any = {
         'Asset Tag': item.asset_tag,
-        'Type': item.type,
+        'Type': item.type === 'NETWORK' ? 'STORAGE' : item.type,
         'Manufacturer': item.manufacturer || item.host_name || '-',
         'Model': item.model_name || item.role_service || '-',
         'Location/Assigned': item.location || item.assigned_to || item.env_tag || '-',
-        'IP Address': item.ip_address || '-',
-        'Created At': item.created_at ? format(new Date(item.created_at), 'yyyy-MM-dd') : '-',
-        'Added By': item.creator_name || 'System'
       };
+
+      if (item.type === 'MACHINE') {
+        exportRow['Monitor Serial'] = item.monitor_serial || '-';
+        exportRow['Keyboard Serial'] = item.keyboard_serial || '-';
+        exportRow['Mouse Serial'] = item.mouse_serial || '-';
+      }
+
+      if (item.type === 'NETWORK') {
+        exportRow['Serial Number'] = item.ip_address || '-';
+      } else {
+        exportRow['IP Address'] = item.ip_address || '-';
+      }
+
+      exportRow['Created At'] = item.created_at ? format(new Date(item.created_at), 'yyyy-MM-dd HH:mm:ss') : '-';
+      exportRow['Last Modified'] = item.modified_at ? format(new Date(item.modified_at), 'yyyy-MM-dd HH:mm:ss') : '-';
+      exportRow['Added By'] = item.creator_name || 'System';
+
+      return exportRow;
     });
 
     const worksheet = XLSX.utils.json_to_sheet(dataToExport);
@@ -389,181 +467,183 @@ export default function Assets() {
         item.manufacturer || item.host_name || '-',
         item.model_name || item.role_service || '-',
         item.location || item.assigned_to || item.env_tag || '-',
+        item.modified_at ? format(new Date(item.modified_at), 'MMM d, HH:mm:ss') : '-',
         item.creator_name || 'System'
       ];
     });
 
     autoTable(doc, {
-      head: [['Asset Tag', 'Type', 'Manufacturer', 'Model', 'Location/User', 'Added By']],
+      head: [['Asset Tag', 'Type', 'Manufacturer', 'Model', 'Location/User', 'Modified', 'Added By']],
       body: tableData,
       theme: 'grid',
       styles: { fontSize: 8 },
-      headStyles: { fillStyle: 'DFDFDF', textColor: 0 },
+      headStyles: { fillColor: [223, 223, 223], textColor: 0 },
     });
 
     doc.save(`Inventory_${activeTab}_${format(new Date(), 'yyyyMMdd')}.pdf`);
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-foreground transition-colors">Inventory Management</h1>
-        <div className="flex items-center space-x-3">
-          <button 
-            onClick={exportToExcel}
-            className="flex items-center px-4 py-2 bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20 rounded-md hover:bg-green-500/20 transition-colors shadow-sm font-medium"
-            title="Download Excel"
-          >
-            <DownloadIcon className="w-4 h-4 mr-2" />
-            Excel
-          </button>
-          <button 
-            onClick={exportToPDF}
-            className="flex items-center px-4 py-2 bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 rounded-md hover:bg-red-500/20 transition-colors shadow-sm font-medium"
-            title="Download PDF"
-          >
-            <DownloadIcon className="w-4 h-4 mr-2" />
-            PDF
-          </button>
+    <>
+      <div className="space-y-6 animate-in fade-in duration-500">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-foreground transition-colors">Inventory Management</h1>
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={exportToExcel}
+              className="flex items-center px-4 py-2 bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20 rounded-md hover:bg-green-500/20 transition-colors shadow-sm font-medium"
+              title="Download Excel"
+            >
+              <DownloadIcon className="w-4 h-4 mr-2" />
+              Excel
+            </button>
+            <button
+              onClick={exportToPDF}
+              className="flex items-center px-4 py-2 bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 rounded-md hover:bg-red-500/20 transition-colors shadow-sm font-medium"
+              title="Download PDF"
+            >
+              <DownloadIcon className="w-4 h-4 mr-2" />
+              PDF
+            </button>
 
-          {canEditInventory && (permittedType === 'ALL' || (activeTab !== 'ALL' && activeTab === permittedType)) && (
-            <div className="flex items-center space-x-3 pl-3 border-l border-border transition-colors">
-              <button 
-                onClick={() => setIsBulkModalOpen(true)}
-                className="flex items-center px-4 py-2 bg-card text-card-foreground border border-border rounded-md hover:bg-accent transition-colors shadow-sm"
+            {canEditInventory && role === 'ADMIN' && (permittedType === 'ALL' || (activeTab !== 'ALL' && activeTab === permittedType)) && (
+              <div className="flex items-center space-x-3 pl-3 border-l border-border transition-colors">
+                <button
+                  onClick={() => setIsBulkModalOpen(true)}
+                  className="flex items-center px-4 py-2 bg-card text-card-foreground border border-border rounded-md hover:bg-accent transition-colors shadow-sm"
+                >
+                  <Upload className="w-4 h-4 mr-2" />
+                  Bulk Upload
+                </button>
+                <button
+                  onClick={openAddModal}
+                  className="flex items-center px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors shadow-lg shadow-primary/20"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Asset
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex space-x-1 bg-accent p-1 rounded-lg w-fit transition-colors">
+          {['ALL', 'MACHINE', 'SERVER', 'NETWORK', 'PRINTER'].map(tab => {
+            const isPermitted = permittedType === 'ALL' || tab === 'ALL' || tab === permittedType;
+            return (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-all flex items-center ${activeTab === tab
+                  ? 'bg-card text-foreground shadow-sm ring-1 ring-black/5 dark:ring-white/10'
+                  : isPermitted
+                    ? 'text-white/70 hover:text-white hover:bg-white/10'
+                    : 'text-white/30 cursor-help'
+                  }`}
+                title={!isPermitted ? `You have View-Only access to ${tab}s` : ''}
               >
-                <Upload className="w-4 h-4 mr-2" />
-                Bulk Upload
+                {tab === 'ALL' ? 'All Assets' : tab === 'NETWORK' ? 'Storage' : tab.charAt(0) + tab.slice(1).toLowerCase() + 's'}
+                {!isPermitted && tab !== 'ALL' && (
+                  <span className="ml-2 text-[9px] px-1.5 py-0.5 bg-white/10 text-white/80 rounded uppercase tracking-tighter transition-colors">View Only</span>
+                )}
               </button>
-              <button 
-                onClick={openAddModal}
-                className="flex items-center px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors shadow-lg shadow-primary/20"
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Add Asset
-              </button>
-            </div>
+            );
+          })}
+        </div>
+
+        <div className="bg-card rounded-xl shadow-sm border border-border overflow-hidden transition-colors">
+          {isLoading ? (
+            <div className="p-8 text-center text-muted-foreground">Loading inventory...</div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-border">
+                  <thead className="bg-accent/50">
+                    {table.getHeaderGroups().map(headerGroup => (
+                      <tr key={headerGroup.id}>
+                        {headerGroup.headers.map(header => (
+                          <th key={header.id} className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                            {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                          </th>
+                        ))}
+                      </tr>
+                    ))}
+                  </thead>
+                  <tbody className="bg-card divide-y divide-border">
+                    {table.getRowModel().rows.map(row => (
+                      <tr key={row.id} className="hover:bg-accent/50 transition-colors">
+                        {row.getVisibleCells().map(cell => (
+                          <td key={cell.id} className="px-6 py-4 whitespace-nowrap text-sm text-foreground">
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {table.getRowModel().rows.length === 0 && (
+                  <div className="p-8 text-center text-muted-foreground">No inventory found for this category.</div>
+                )}
+              </div>
+
+              {/* Pagination Controls */}
+              <div className="px-6 py-4 flex items-center justify-between border-t border-border bg-accent/20 transition-colors">
+                <div className="flex items-center text-sm text-muted-foreground">
+                  <span className="mr-4">
+                    Page <strong>{table.getState().pagination.pageIndex + 1}</strong> of{' '}
+                    <strong>{table.getPageCount()}</strong>
+                  </span>
+                  <select
+                    value={table.getState().pagination.pageSize}
+                    onChange={e => table.setPageSize(Number(e.target.value))}
+                    className="bg-card border border-border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
+                  >
+                    {[10, 20, 30, 40, 50].map(pageSize => (
+                      <option key={pageSize} value={pageSize}>
+                        Show {pageSize}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => table.setPageIndex(0)}
+                    disabled={!table.getCanPreviousPage()}
+                    className="p-2 rounded-md border border-border bg-card text-muted-foreground disabled:opacity-30 hover:bg-accent transition-colors"
+                  >
+                    <ChevronsLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => table.previousPage()}
+                    disabled={!table.getCanPreviousPage()}
+                    className="p-2 rounded-md border border-border bg-card text-muted-foreground disabled:opacity-30 hover:bg-accent transition-colors"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => table.nextPage()}
+                    disabled={!table.getCanNextPage()}
+                    className="p-2 rounded-md border border-border bg-card text-muted-foreground disabled:opacity-30 hover:bg-accent transition-colors"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => table.setPageIndex(table.getPageCount() - 1)}
+                    disabled={!table.getCanNextPage()}
+                    className="p-2 rounded-md border border-border bg-card text-muted-foreground disabled:opacity-30 hover:bg-accent transition-colors"
+                  >
+                    <ChevronsRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </>
           )}
         </div>
       </div>
 
-      <div className="flex space-x-1 bg-accent p-1 rounded-lg w-fit transition-colors">
-        {['ALL', 'MACHINE', 'SERVER', 'NETWORK', 'PRINTER'].map(tab => {
-          const isPermitted = permittedType === 'ALL' || tab === 'ALL' || tab === permittedType;
-          return (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2 text-sm font-medium rounded-md transition-all flex items-center ${
-                activeTab === tab 
-                  ? 'bg-card text-foreground shadow-sm ring-1 ring-black/5 dark:ring-white/10' 
-                  : isPermitted 
-                    ? 'text-muted-foreground hover:text-foreground hover:bg-background'
-                    : 'text-muted-foreground/50 bg-background/50 opacity-60 cursor-help'
-              }`}
-              title={!isPermitted ? `You have View-Only access to ${tab}s` : ''}
-            >
-              {tab === 'ALL' ? 'All Assets' : tab.charAt(0) + tab.slice(1).toLowerCase() + 's'}
-              {!isPermitted && tab !== 'ALL' && (
-                <span className="ml-2 text-[9px] px-1.5 py-0.5 bg-accent text-muted-foreground rounded uppercase tracking-tighter transition-colors">View Only</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
- 
-      <div className="bg-card rounded-xl shadow-sm border border-border overflow-hidden transition-colors">
-        {isLoading ? (
-          <div className="p-8 text-center text-muted-foreground">Loading inventory...</div>
-        ) : (
-          <>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-border">
-                <thead className="bg-accent/50">
-                  {table.getHeaderGroups().map(headerGroup => (
-                    <tr key={headerGroup.id}>
-                      {headerGroup.headers.map(header => (
-                        <th key={header.id} className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                          {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                        </th>
-                      ))}
-                    </tr>
-                  ))}
-                </thead>
-                <tbody className="bg-card divide-y divide-border">
-                  {table.getRowModel().rows.map(row => (
-                    <tr key={row.id} className="hover:bg-accent/50 transition-colors">
-                      {row.getVisibleCells().map(cell => (
-                        <td key={cell.id} className="px-6 py-4 whitespace-nowrap text-sm text-foreground">
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {table.getRowModel().rows.length === 0 && (
-                <div className="p-8 text-center text-muted-foreground">No inventory found for this category.</div>
-              )}
-            </div>
- 
-            {/* Pagination Controls */}
-            <div className="px-6 py-4 flex items-center justify-between border-t border-border bg-accent/20 transition-colors">
-              <div className="flex items-center text-sm text-muted-foreground">
-                <span className="mr-4">
-                  Page <strong>{table.getState().pagination.pageIndex + 1}</strong> of{' '}
-                  <strong>{table.getPageCount()}</strong>
-                </span>
-                <select
-                  value={table.getState().pagination.pageSize}
-                  onChange={e => table.setPageSize(Number(e.target.value))}
-                  className="bg-card border border-border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
-                >
-                  {[10, 20, 30, 40, 50].map(pageSize => (
-                    <option key={pageSize} value={pageSize}>
-                      Show {pageSize}
-                    </option>
-                  ))}
-                </select>
-              </div>
- 
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => table.setPageIndex(0)}
-                  disabled={!table.getCanPreviousPage()}
-                  className="p-2 rounded-md border border-border bg-card text-muted-foreground disabled:opacity-30 hover:bg-accent transition-colors"
-                >
-                  <ChevronsLeft className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => table.previousPage()}
-                  disabled={!table.getCanPreviousPage()}
-                  className="p-2 rounded-md border border-border bg-card text-muted-foreground disabled:opacity-30 hover:bg-accent transition-colors"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => table.nextPage()}
-                  disabled={!table.getCanNextPage()}
-                  className="p-2 rounded-md border border-border bg-card text-muted-foreground disabled:opacity-30 hover:bg-accent transition-colors"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => table.setPageIndex(table.getPageCount() - 1)}
-                  disabled={!table.getCanNextPage()}
-                  className="p-2 rounded-md border border-border bg-card text-muted-foreground disabled:opacity-30 hover:bg-accent transition-colors"
-                >
-                  <ChevronsRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
           <div className="bg-card text-card-foreground rounded-xl shadow-lg w-full max-w-md p-6 max-h-[90vh] overflow-y-auto border border-border transition-colors">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold">{editMode ? 'Edit Inventory' : 'Add New Inventory'}</h2>
@@ -571,11 +651,11 @@ export default function Assets() {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            
+
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-muted-foreground mb-1">Type</label>
-                <select 
+                <select
                   className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-muted"
                   value={assetType}
                   onChange={handleTypeChange}
@@ -583,26 +663,21 @@ export default function Assets() {
                 >
                   {(permittedType === 'ALL' || permittedType === 'MACHINE') && <option value="MACHINE">Machine</option>}
                   {(permittedType === 'ALL' || permittedType === 'SERVER') && <option value="SERVER">Server</option>}
-                  {(permittedType === 'ALL' || permittedType === 'NETWORK') && <option value="NETWORK">Network</option>}
+                  {(permittedType === 'ALL' || permittedType === 'NETWORK') && <option value="NETWORK">Storage</option>}
                   {(permittedType === 'ALL' || permittedType === 'PRINTER') && <option value="PRINTER">Printer</option>}
                 </select>
               </div>
- 
+
+              {/* Form fields here... (I will keep the rest as is but move the block) */}
+
               {/* Common Fields */}
               <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-muted-foreground mb-1">Asset Tag</label>
-                  <input type="text" required name="asset_tag" value={formData.asset_tag || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
-                </div>
+
                 {assetType !== 'SERVER' && (
                   <>
                     <div>
                       <label className="block text-sm font-medium text-muted-foreground mb-1">Manufacturer</label>
                       <input type="text" required name="manufacturer" value={formData.manufacturer || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-muted-foreground mb-1">Model Name</label>
-                      <input type="text" required name="model_name" value={formData.model_name || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
                     </div>
                   </>
                 )}
@@ -613,13 +688,14 @@ export default function Assets() {
                 <>
                   <div>
                     <label className="block text-sm font-medium text-muted-foreground mb-1">Subtype</label>
-                    <select 
-                      name="subtype" 
-                      value={formData.subtype || 'Workstation'} 
+                    <select
+                      name="subtype"
+                      value={formData.subtype || 'Workstation'}
                       onChange={handleChange}
                       className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
                     >
                       <option value="Workstation">Workstation</option>
+                      <option value="UPS">UPS</option>
                       <option value="Switch">Switch</option>
                       <option value="Router">Router</option>
                       <option value="Mux">Mux</option>
@@ -629,9 +705,9 @@ export default function Assets() {
                   {formData.subtype === 'Switch' && (
                     <div>
                       <label className="block text-sm font-medium text-muted-foreground mb-1">Switch Type</label>
-                      <select 
-                        name="switch_type" 
-                        value={formData.switch_type || ''} 
+                      <select
+                        name="switch_type"
+                        value={formData.switch_type || ''}
                         onChange={handleChange}
                         className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
                       >
@@ -680,16 +756,8 @@ export default function Assets() {
                   ) : (
                     <>
                       <div>
-                        <label className="block text-sm font-medium text-muted-foreground mb-1">IP Address</label>
-                        <input type="text" name="ip_address" value={formData.ip_address || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-muted-foreground mb-1">MAC Address</label>
-                        <input type="text" name="mac_address" value={formData.mac_address || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-muted-foreground mb-1">VLAN</label>
-                        <input type="text" name="vlan" value={formData.vlan || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
+                        <label className="block text-sm font-medium text-muted-foreground mb-1">Serial Number</label>
+                        <input type="text" name="cpu_serial" value={formData.cpu_serial || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
                       </div>
                     </>
                   )}
@@ -706,107 +774,19 @@ export default function Assets() {
                 </>
               )}
 
-              {/* Network Specific Fields */}
+              {/* Storage Specific Fields */}
               {assetType === 'NETWORK' && (
                 <>
-                  <div>
-                    <label className="block text-sm font-medium text-muted-foreground mb-1">IP Address</label>
-                    <input type="text" name="ip_address" value={formData.ip_address || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-muted-foreground mb-1">Assigned To (Stack)</label>
-                    <input type="text" name="assigned_to" value={formData.assigned_to || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
-                  </div>
-                </>
-              )}
-
-              {/* Server Specific Fields */}
-              {assetType === 'SERVER' && (
-                <div className="space-y-4">
-                  <div className="bg-accent/30 p-3 rounded-lg border border-border">
-                    <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">1. Hardware Attributes</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="col-span-2">
-                        <label className="block text-[10px] font-bold text-muted-foreground uppercase mb-1">Host Name</label>
-                        <input type="text" required name="host_name" value={formData.host_name || ''} onChange={handleChange} className="w-full px-3 py-2 text-sm border border-border bg-background text-foreground rounded-md" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-muted-foreground uppercase mb-1">Form Factor</label>
-                        <input type="text" name="form_factor" value={formData.form_factor || ''} onChange={handleChange} placeholder="e.g. 2U Rack" className="w-full px-3 py-2 text-sm border border-border bg-background text-foreground rounded-md" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-muted-foreground uppercase mb-1">CPU Cores</label>
-                        <input type="text" name="cpu_core_count" value={formData.cpu_core_count || ''} onChange={handleChange} className="w-full px-3 py-2 text-sm border border-border bg-background text-foreground rounded-md" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-muted-foreground uppercase mb-1">RAM Capacity</label>
-                        <input type="text" name="ram_capacity" value={formData.ram_capacity || ''} onChange={handleChange} className="w-full px-3 py-2 text-sm border border-border bg-background text-foreground rounded-md" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-muted-foreground uppercase mb-1">Storage</label>
-                        <input type="text" name="storage_config" value={formData.storage_config || ''} onChange={handleChange} className="w-full px-3 py-2 text-sm border border-border bg-background text-foreground rounded-md" />
-                      </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-muted-foreground mb-1">Manufacturer</label>
+                      <input type="text" name="manufacturer" value={formData.manufacturer || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-muted-foreground mb-1">Serial Number</label>
+                      <input type="text" name="ip_address" value={formData.ip_address || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
                     </div>
                   </div>
-
-                  <div className="bg-accent/30 p-3 rounded-lg border border-border">
-                    <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">2. Network Attributes</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[10px] font-bold text-muted-foreground uppercase mb-1">IP Address</label>
-                        <input type="text" name="ip_address" value={formData.ip_address || ''} onChange={handleChange} className="w-full px-3 py-2 text-sm border border-border bg-background text-foreground rounded-md" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-muted-foreground uppercase mb-1">MAC Address</label>
-                        <input type="text" name="mac_address" value={formData.mac_address || ''} onChange={handleChange} className="w-full px-3 py-2 text-sm border border-border bg-background text-foreground rounded-md" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-muted-foreground uppercase mb-1">Subnet/VLAN</label>
-                        <input type="text" name="subnet_vlan" value={formData.subnet_vlan || ''} onChange={handleChange} className="w-full px-3 py-2 text-sm border border-border bg-background text-foreground rounded-md" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-muted-foreground uppercase mb-1">Gateway/DNS</label>
-                        <input type="text" name="gateway_dns" value={formData.gateway_dns || ''} onChange={handleChange} className="w-full px-3 py-2 text-sm border border-border bg-background text-foreground rounded-md" />
-                      </div>
-                      <div className="col-span-2">
-                        <label className="block text-[10px] font-bold text-muted-foreground uppercase mb-1">Open Ports</label>
-                        <input type="text" name="open_ports" value={formData.open_ports || ''} onChange={handleChange} placeholder="80, 443, 22" className="w-full px-3 py-2 text-sm border border-border bg-background text-foreground rounded-md" />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-accent/30 p-3 rounded-lg border border-border">
-                    <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">3. Software Attributes</p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[10px] font-bold text-muted-foreground uppercase mb-1">OS</label>
-                        <input type="text" name="os" value={formData.os || ''} onChange={handleChange} className="w-full px-3 py-2 text-sm border border-border bg-background text-foreground rounded-md" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-muted-foreground uppercase mb-1">Kernel</label>
-                        <input type="text" name="kernel_version" value={formData.kernel_version || ''} onChange={handleChange} className="w-full px-3 py-2 text-sm border border-border bg-background text-foreground rounded-md" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-muted-foreground uppercase mb-1">Environment</label>
-                        <select name="env_tag" value={formData.env_tag || ''} onChange={handleChange} className="w-full px-3 py-2 text-sm border border-border bg-background text-foreground rounded-md">
-                          <option value="">Select Env</option>
-                          <option value="Production">Production</option>
-                          <option value="Staging">Staging</option>
-                          <option value="Development">Development</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-muted-foreground uppercase mb-1">Role/Service</label>
-                        <input type="text" name="role_service" value={formData.role_service || ''} onChange={handleChange} placeholder="e.g. Database" className="w-full px-3 py-2 text-sm border border-border bg-background text-foreground rounded-md" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Printer Specific Fields */}
-              {assetType === 'PRINTER' && (
-                <>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-muted-foreground mb-1">Location</label>
@@ -820,11 +800,96 @@ export default function Assets() {
                 </>
               )}
 
+              {/* Server Specific Fields */}
+              {assetType === 'SERVER' && (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-muted-foreground mb-1">Manufacturer</label>
+                      <input type="text" name="manufacturer" value={formData.manufacturer || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-muted-foreground mb-1">Serial Number</label>
+                      <input type="text" name="serial_number" value={formData.serial_number || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-muted-foreground mb-1">Operating System</label>
+                    <input type="text" name="os" value={formData.os || ''} onChange={handleChange} placeholder="e.g. Windows Server 2022, Ubuntu 22.04" className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-muted-foreground mb-1">Location</label>
+                      <input type="text" name="location" value={formData.location || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-muted-foreground mb-1">Assigned To</label>
+                      <input type="text" name="assigned_to" value={formData.assigned_to || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* Printer Specific Fields */}
+              {assetType === 'PRINTER' && (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-2">
+                      <label className="block text-sm font-medium text-muted-foreground mb-1">Serial Number</label>
+                      <input type="text" name="serial_number" value={formData.serial_number || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-muted-foreground mb-1">Location</label>
+                      <input type="text" name="location" value={formData.location || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-muted-foreground mb-1">Assigned To</label>
+                      <input type="text" name="assigned_to" value={formData.assigned_to || ''} onChange={handleChange} className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-1 focus:ring-primary" />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* Bill Upload Section */}
+              <div className="bg-primary/5 p-4 rounded-xl border border-primary/10">
+                <label className="block text-xs font-black text-primary uppercase tracking-[0.2em] mb-2">Invoice / Bill Upload</label>
+                <div className="flex items-center space-x-3">
+                  <div className="relative flex-1">
+                    <input 
+                      type="file" 
+                      id="bill-upload"
+                      className="hidden" 
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      onChange={(e) => setBillFile(e.target.files?.[0] || null)}
+                    />
+                    <label 
+                      htmlFor="bill-upload"
+                      className="flex items-center justify-center w-full px-4 py-3 bg-card border-2 border-dashed border-border rounded-xl cursor-pointer hover:border-primary/50 transition-all group"
+                    >
+                      <Upload className="w-5 h-5 mr-3 text-muted-foreground group-hover:text-primary" />
+                      <span className="text-sm font-bold text-muted-foreground group-hover:text-foreground">
+                        {billFile ? billFile.name : 'Select Invoice File (PDF/Image)'}
+                      </span>
+                    </label>
+                  </div>
+                  {billFile && (
+                    <button 
+                      type="button" 
+                      onClick={() => setBillFile(null)}
+                      className="p-3 bg-red-500/10 text-red-500 rounded-xl hover:bg-red-500/20 transition-colors"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  )}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-2 italic font-medium">Max size: 5MB. Format: PDF, JPG, PNG</p>
+              </div>
+
               {(createMutation.isError || updateMutation.isError) && (
-                 <div className="text-destructive text-sm font-medium p-3 bg-destructive/10 rounded-lg border border-destructive/20 transition-colors">
-                   <p className="font-bold">{((createMutation.error as any)?.response?.data?.error) || ((updateMutation.error as any)?.response?.data?.error) || 'Error saving inventory'}</p>
-                   <p className="text-xs mt-1">{((createMutation.error as any)?.response?.data?.details) || ((updateMutation.error as any)?.response?.data?.details)}</p>
-                 </div>
+                <div className="text-destructive text-sm font-medium p-3 bg-destructive/10 rounded-lg border border-destructive/20 transition-colors">
+                  <p className="font-bold">{((createMutation.error as any)?.response?.data?.error) || ((updateMutation.error as any)?.response?.data?.error) || 'Error saving inventory'}</p>
+                  <p className="text-xs mt-1">{((createMutation.error as any)?.response?.data?.details) || ((updateMutation.error as any)?.response?.data?.details)}</p>
+                </div>
               )}
               <div className="pt-4 flex justify-end space-x-3">
                 <button type="button" onClick={closeModal} className="px-4 py-2 text-sm font-medium text-foreground bg-muted rounded-md hover:bg-muted/80 transition-colors">
@@ -840,11 +905,11 @@ export default function Assets() {
       )}
 
       {isBulkModalOpen && (
-        <BulkUploadModal 
-          onClose={() => setIsBulkModalOpen(false)} 
-          onSuccess={() => queryClient.invalidateQueries({ queryKey: ['assets'] })} 
+        <BulkUploadModal
+          onClose={() => setIsBulkModalOpen(false)}
+          onSuccess={() => queryClient.invalidateQueries({ queryKey: ['assets'] })}
         />
       )}
-    </div>
+    </>
   );
 }

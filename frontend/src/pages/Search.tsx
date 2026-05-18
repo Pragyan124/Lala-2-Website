@@ -90,6 +90,7 @@ export default function Search() {
                       <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Type</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Model</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Created</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Modified</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -100,6 +101,9 @@ export default function Search() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-muted-foreground">{asset.model_name || '-'}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-muted-foreground">
                           {asset.created_at ? format(new Date(asset.created_at), 'MMM d, yyyy') : '-'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-muted-foreground">
+                          {asset.modified_at ? format(new Date(asset.modified_at), 'MMM d, HH:mm:ss') : '-'}
                         </td>
                       </tr>
                     ))}

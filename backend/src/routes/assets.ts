@@ -1,8 +1,37 @@
 import { Router } from 'express';
 import prisma from '../utils/prisma';
 import { authenticate, requireAdmin, AuthRequest, requireInventoryAccess } from '../middleware/auth';
+import { encodePassword } from '../utils/encoding';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
 
 const router = Router();
+
+// Multer config
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, '../../uploads');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'bill-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|pdf/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    if (extname && mimetype) return cb(null, true);
+    cb(new Error('Only images and PDFs are allowed'));
+  }
+});
 
 const checkPermittedType = (req: AuthRequest, res: any, next: any) => {
   const user = req.user;
@@ -41,19 +70,24 @@ router.get('/', authenticate, async (req, res) => {
     });
 
     const formatted = inventory.map(item => {
-      let specificData = {};
-      if (item.type === 'MACHINE' && item.machine) specificData = item.machine;
-      else if (item.type === 'NETWORK' && item.network) specificData = item.network;
-      else if (item.type === 'PRINTER' && item.printer) specificData = item.printer;
-      else if (item.type === 'SERVER' && item.server) specificData = item.server;
+      let specificData: any = {};
+      if (item.type === 'MACHINE' && item.machine) specificData = { ...item.machine };
+      else if (item.type === 'NETWORK' && item.network) specificData = { ...item.network };
+      else if (item.type === 'PRINTER' && item.printer) specificData = { ...item.printer };
+      else if (item.type === 'SERVER' && item.server) specificData = { ...item.server };
+
+      // Ensure we don't overwrite the Inventory ID with the sub-item ID
+      const { id: subId, inventory_id, ...rest } = specificData;
 
       return {
         id: item.id,
         asset_tag: item.asset_tag,
         type: item.type,
         created_at: item.created_at,
-        creator_name: item.creator?.username,
-        ...specificData
+        modified_at: item.modified_at,
+        bill_url: item.bill_url,
+        creator_name: item.creator?.username || item.created_by_name,
+        ...rest
       };
     });
 
@@ -79,6 +113,8 @@ router.post('/', authenticate, requireInventoryAccess, checkPermittedType, async
           created_by: userId,
           created_by_name: username,
         }
+
+
       });
 
       if (type === 'MACHINE') {
@@ -124,6 +160,7 @@ router.post('/', authenticate, requireInventoryAccess, checkPermittedType, async
             asset_tag,
             manufacturer: data.manufacturer,
             model_name: data.model_name,
+            serial_number: data.serial_number,
             assigned_to: data.assigned_to,
             location: data.location,
             created_by: userId
@@ -134,20 +171,11 @@ router.post('/', authenticate, requireInventoryAccess, checkPermittedType, async
           data: {
             inventory_id: newInventory.id,
             asset_tag,
-            host_name: data.host_name,
-            form_factor: data.form_factor,
-            cpu_core_count: data.cpu_core_count,
-            ram_capacity: data.ram_capacity,
-            storage_config: data.storage_config,
-            ip_address: data.ip_address,
-            mac_address: data.mac_address,
-            subnet_vlan: data.subnet_vlan,
-            gateway_dns: data.gateway_dns,
-            open_ports: data.open_ports,
+            manufacturer: data.manufacturer,
+            serial_number: data.serial_number,
             os: data.os,
-            kernel_version: data.kernel_version,
-            env_tag: data.env_tag,
-            role_service: data.role_service,
+            location: data.location,
+            assigned_to: data.assigned_to,
             created_by: userId
           }
         });
@@ -204,6 +232,8 @@ router.post('/bulk', authenticate, requireInventoryAccess, checkPermittedType, a
             created_by: userId,
             created_by_name: username,
           }
+
+
         });
 
         if (type === 'MACHINE') {
@@ -248,7 +278,6 @@ router.post('/bulk', authenticate, requireInventoryAccess, checkPermittedType, a
               location: data.location,
               assigned_to: data.assigned_to,
               created_by: userId,
-              created_by_name: username,
             }
           });
         } else if (type === 'NETWORK') {
@@ -278,6 +307,7 @@ router.post('/bulk', authenticate, requireInventoryAccess, checkPermittedType, a
               asset_tag,
               manufacturer: data.manufacturer || 'Unknown',
               model_name: data.model_name || 'Unknown',
+              serial_number: data.serial_number,
               assigned_to: data.assigned_to,
               location: data.location,
             },
@@ -286,6 +316,7 @@ router.post('/bulk', authenticate, requireInventoryAccess, checkPermittedType, a
               asset_tag,
               manufacturer: data.manufacturer || 'Unknown',
               model_name: data.model_name || 'Unknown',
+              serial_number: data.serial_number,
               assigned_to: data.assigned_to,
               location: data.location,
               created_by: userId
@@ -296,38 +327,20 @@ router.post('/bulk', authenticate, requireInventoryAccess, checkPermittedType, a
             where: { inventory_id: newInventory.id },
             update: {
               asset_tag,
-              host_name: data.host_name || 'Unknown',
-              form_factor: data.form_factor,
-              cpu_core_count: data.cpu_core_count,
-              ram_capacity: data.ram_capacity,
-              storage_config: data.storage_config,
-              ip_address: data.ip_address,
-              mac_address: data.mac_address,
-              subnet_vlan: data.subnet_vlan,
-              gateway_dns: data.gateway_dns,
-              open_ports: data.open_ports,
+              manufacturer: data.manufacturer,
+              serial_number: data.serial_number,
               os: data.os,
-              kernel_version: data.kernel_version,
-              env_tag: data.env_tag,
-              role_service: data.role_service,
+              location: data.location,
+              assigned_to: data.assigned_to,
             },
             create: {
               inventory_id: newInventory.id,
               asset_tag,
-              host_name: data.host_name || 'Unknown',
-              form_factor: data.form_factor,
-              cpu_core_count: data.cpu_core_count,
-              ram_capacity: data.ram_capacity,
-              storage_config: data.storage_config,
-              ip_address: data.ip_address,
-              mac_address: data.mac_address,
-              subnet_vlan: data.subnet_vlan,
-              gateway_dns: data.gateway_dns,
-              open_ports: data.open_ports,
+              manufacturer: data.manufacturer,
+              serial_number: data.serial_number,
               os: data.os,
-              kernel_version: data.kernel_version,
-              env_tag: data.env_tag,
-              role_service: data.role_service,
+              location: data.location,
+              assigned_to: data.assigned_to,
               created_by: userId
             }
           });
@@ -408,6 +421,7 @@ router.put('/:id', authenticate, requireInventoryAccess, checkPermittedType, asy
           asset_tag,
           manufacturer: data.manufacturer,
           model_name: data.model_name,
+          serial_number: data.serial_number,
           assigned_to: data.assigned_to,
           location: data.location,
         }
@@ -417,25 +431,46 @@ router.put('/:id', authenticate, requireInventoryAccess, checkPermittedType, asy
         where: { inventory_id: Number(id) },
         data: {
           asset_tag,
-          host_name: data.host_name,
-          form_factor: data.form_factor,
-          cpu_core_count: data.cpu_core_count,
-          ram_capacity: data.ram_capacity,
-          storage_config: data.storage_config,
-          ip_address: data.ip_address,
-          mac_address: data.mac_address,
-          subnet_vlan: data.subnet_vlan,
-          gateway_dns: data.gateway_dns,
-          open_ports: data.open_ports,
+          manufacturer: data.manufacturer,
+          serial_number: data.serial_number,
           os: data.os,
-          kernel_version: data.kernel_version,
-          env_tag: data.env_tag,
-          role_service: data.role_service,
+          location: data.location,
+          assigned_to: data.assigned_to,
         }
       });
     }
 
-    res.json(inventory);
+    const updated = await prisma.inventory.findUnique({
+      where: { id: Number(id) },
+      include: {
+        machine: true,
+        network: true,
+        printer: true,
+        server: true,
+        creator: true
+      }
+    });
+
+    if (!updated) return res.status(404).json({ error: 'Asset not found after update' });
+
+    let specificData: any = {};
+    if (updated.type === 'MACHINE' && updated.machine) specificData = { ...updated.machine };
+    else if (updated.type === 'NETWORK' && updated.network) specificData = { ...updated.network };
+    else if (updated.type === 'PRINTER' && updated.printer) specificData = { ...updated.printer };
+    else if (updated.type === 'SERVER' && updated.server) specificData = { ...updated.server };
+
+    const { id: subId, inventory_id, ...rest } = specificData;
+
+    res.json({
+      id: updated.id,
+      asset_tag: updated.asset_tag,
+      type: updated.type,
+      created_at: updated.created_at,
+      modified_at: updated.modified_at,
+      bill_url: updated.bill_url,
+      creator_name: updated.creator?.username || updated.created_by_name,
+      ...rest
+    });
   } catch (error) {
     console.error(error);
     res.status(400).json({ error: 'Failed to update asset' });
@@ -494,13 +529,15 @@ router.post('/bulk', authenticate, requireAdmin, async (req: AuthRequest, res) =
           },
           create: {
             username: item.username,
-            password: item.password || item.username, // Default password is username
+            password: encodePassword(item.password || item.username), // Default password is username
             role: item.role?.toUpperCase() === 'ADMIN' ? 'ADMIN' : 'USER',
             division: item.division || null,
             dco: item.dco || 'Guwahati',
             created_by: adminId,
           }
         });
+
+
         processedUsers.push(newUser);
       }
       return processedUsers;
@@ -510,6 +547,75 @@ router.post('/bulk', authenticate, requireAdmin, async (req: AuthRequest, res) =
   } catch (error: any) {
     console.error('Bulk user upload error:', error);
     res.status(400).json({ error: 'Unique constraint failed. Check for duplicate usernames.', details: error.message });
+  }
+});
+
+router.post('/:id/bill', authenticate, upload.single('bill'), async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const bill_url = `/uploads/${req.file.filename}`;
+    
+    await prisma.inventory.update({
+      where: { id: Number(id) },
+      data: { bill_url }
+    });
+
+    res.json({ bill_url });
+  } catch (error) {
+    console.error('Bill upload error:', error);
+    res.status(500).json({ error: 'Failed to upload bill' });
+  }
+});
+
+router.post('/tag/:asset_tag/bill', authenticate, upload.single('bill'), async (req: AuthRequest, res) => {
+  try {
+    const { asset_tag } = req.params;
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const bill_url = `/uploads/${req.file.filename}`;
+    
+    const inventory = await prisma.inventory.findUnique({
+      where: { asset_tag }
+    });
+
+    if (!inventory) {
+      return res.status(404).json({ error: `Asset with tag ${asset_tag} not found` });
+    }
+
+    await prisma.inventory.update({
+      where: { id: inventory.id },
+      data: { bill_url }
+    });
+
+    res.json({ success: true, bill_url, asset_tag });
+  } catch (error) {
+    console.error('Bill upload by tag error:', error);
+    res.status(500).json({ error: 'Failed to upload bill' });
+  }
+});
+
+router.post('/bulk-apply-bill', authenticate, upload.single('bill'), async (req: AuthRequest, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const bill_url = `/uploads/${req.file.filename}`;
+    
+    // Update all inventory records at once
+    const result = await prisma.inventory.updateMany({
+      data: { bill_url }
+    });
+
+    res.json({ 
+      success: true, 
+      message: `Applied bill to all ${result.count} records`,
+      count: result.count, 
+      bill_url 
+    });
+  } catch (error) {
+    console.error('Bulk apply bill error:', error);
+    res.status(500).json({ error: 'Failed to apply bill to all records' });
   }
 });
 

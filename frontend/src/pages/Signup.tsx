@@ -160,7 +160,7 @@ export default function Signup() {
                   >
                     <option value="ALL">Full Access (All Types)</option>
                     <option value="MACHINE">Machines Only</option>
-                    <option value="NETWORK">Networks Only</option>
+                    <option value="NETWORK">Storage Only</option>
                     <option value="PRINTER">Printers Only</option>
                   </select>
                   <p className="text-[11px] text-muted-foreground ml-1 italic">Determines which items this user can Create/Edit/Delete</p>

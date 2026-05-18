@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 import { 
-  Plus, Search, Filter, RotateCcw, CheckCircle, Trash2, X, AlertCircle, 
+  Plus, Search, Filter, Trash2, X, AlertCircle, 
   MessageSquare, User as UserIcon, Calendar, Clock, Monitor, Tag
 } from 'lucide-react';
 import { format } from 'date-fns';
@@ -14,6 +14,7 @@ interface Ticket {
   issue_description: string;
   status: 'Open' | 'In Progress' | 'Closed';
   created_at: string;
+  modified_at: string;
   username: string;
 }
 
@@ -23,7 +24,7 @@ export default function Tickets() {
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [newTicket, setNewTicket] = useState({
-    asset_tag: '',
+    asset_tag: 'GENERAL',
     issue_type: 'H/W' as 'H/W' | 'S/W',
     issue_description: ''
   });
@@ -37,10 +38,9 @@ export default function Tickets() {
   });
 
   const sessionUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+  // Only ADMIN has full modification rights. SUPERADMIN is view-only for all tickets.
   const isAdmin = user?.role?.toUpperCase() === 'ADMIN' || 
-                  user?.role?.toUpperCase() === 'SUPERADMIN' || 
-                  sessionUser?.role?.toUpperCase() === 'ADMIN' ||
-                  sessionUser?.role?.toUpperCase() === 'SUPERADMIN';
+                  sessionUser?.role?.toUpperCase() === 'ADMIN';
 
   console.log('Tickets Auth Debug:', { apiRole: user?.role, sessionRole: sessionUser?.role, isAdmin });
 
@@ -57,7 +57,7 @@ export default function Tickets() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tickets'] });
       setIsModalOpen(false);
-      setNewTicket({ asset_tag: '', issue_type: 'H/W', issue_description: '' });
+      setNewTicket({ asset_tag: 'GENERAL', issue_type: 'H/W', issue_description: '' });
     },
     onError: (err: any) => {
       const msg = err.response?.data?.error || 'Failed to log ticket. Please ensure you have run the database migration.';
@@ -99,7 +99,8 @@ export default function Tickets() {
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <>
+      <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-foreground tracking-tight">Support Tickets</h1>
@@ -134,19 +135,20 @@ export default function Tickets() {
           <table className="w-full">
             <thead>
               <tr className="bg-accent/30 border-b border-border">
-                <th className="px-6 py-4 text-left text-xs font-bold text-muted-foreground uppercase tracking-widest">Asset Tag</th>
+
                 <th className="px-6 py-4 text-left text-xs font-bold text-muted-foreground uppercase tracking-widest">User</th>
                 <th className="px-6 py-4 text-left text-xs font-bold text-muted-foreground uppercase tracking-widest">Type</th>
                 <th className="px-6 py-4 text-left text-xs font-bold text-muted-foreground uppercase tracking-widest">Description</th>
                 <th className="px-6 py-4 text-left text-xs font-bold text-muted-foreground uppercase tracking-widest">Status</th>
-                <th className="px-6 py-4 text-left text-xs font-bold text-muted-foreground uppercase tracking-widest">Date</th>
+                <th className="px-6 py-4 text-left text-xs font-bold text-muted-foreground uppercase tracking-widest">Added</th>
+                <th className="px-6 py-4 text-left text-xs font-bold text-muted-foreground uppercase tracking-widest">Modified</th>
                 <th className="px-6 py-4 text-right text-xs font-bold text-muted-foreground uppercase tracking-widest">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {filteredTickets?.map((ticket) => (
                 <tr key={ticket.id} className="hover:bg-accent/30 transition-colors group cursor-pointer" onClick={() => setSelectedTicket(ticket)}>
-                  <td className="px-6 py-4 text-sm font-bold text-primary">{ticket.asset_tag}</td>
+
                   <td className="px-6 py-4 text-sm font-medium">{ticket.username}</td>
                   <td className="px-6 py-4">
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase ${ticket.issue_type === 'H/W' ? 'bg-orange-500/10 text-orange-600 border-orange-500/20' : 'bg-blue-500/10 text-blue-600 border-blue-500/20'}`}>
@@ -161,8 +163,11 @@ export default function Tickets() {
                       {ticket.status}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-xs text-muted-foreground">
-                    {format(new Date(ticket.created_at), 'MMM d, HH:mm')}
+                  <td className="px-6 py-4 text-xs text-muted-foreground whitespace-nowrap">
+                    {format(new Date(ticket.created_at), 'MMM d, HH:mm:ss')}
+                  </td>
+                  <td className="px-6 py-4 text-xs text-muted-foreground whitespace-nowrap">
+                    {ticket.modified_at ? format(new Date(ticket.modified_at), 'MMM d, HH:mm:ss') : '-'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end space-x-3">
@@ -209,10 +214,11 @@ export default function Tickets() {
           </table>
         </div>
       </div>
+    </div>
 
       {/* Ticket Details Modal */}
       {selectedTicket && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-in fade-in duration-300">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-in fade-in duration-300">
           <div className="bg-card w-full max-w-lg rounded-3xl shadow-2xl border border-border overflow-hidden">
             <div className="p-6 border-b border-border flex items-center justify-between bg-accent/30">
               <div className="flex items-center">
@@ -226,10 +232,7 @@ export default function Tickets() {
             
             <div className="p-8 space-y-6">
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2 flex items-center"><Tag className="w-3 h-3 mr-1" /> Asset Tag</p>
-                  <p className="text-sm font-bold text-primary">{selectedTicket.asset_tag}</p>
-                </div>
+
                 <div>
                   <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2 flex items-center"><Monitor className="w-3 h-3 mr-1" /> Type</p>
                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase ${selectedTicket.issue_type === 'H/W' ? 'bg-orange-500/10 text-orange-600 border-orange-500/20' : 'bg-blue-500/10 text-blue-600 border-blue-500/20'}`}>
@@ -251,8 +254,12 @@ export default function Tickets() {
                   <p className="text-sm font-semibold text-foreground">{selectedTicket.username || 'Unknown'}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2 flex items-center"><Calendar className="w-3 h-3 mr-1" /> Date</p>
-                  <p className="text-sm font-semibold text-foreground">{format(new Date(selectedTicket.created_at), 'PPP p')}</p>
+                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2 flex items-center"><Calendar className="w-3 h-3 mr-1" /> Added</p>
+                  <p className="text-sm font-semibold text-foreground">{format(new Date(selectedTicket.created_at), 'PPP HH:mm:ss')}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2 flex items-center"><Clock className="w-3 h-3 mr-1" /> Last Modified</p>
+                  <p className="text-sm font-semibold text-foreground">{selectedTicket.modified_at ? format(new Date(selectedTicket.modified_at), 'PPP HH:mm:ss') : 'Never'}</p>
                 </div>
               </div>
 
@@ -307,7 +314,7 @@ export default function Tickets() {
 
       {/* Log Issue Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-in fade-in duration-300">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-in fade-in duration-300">
           <div className="bg-card w-full max-w-lg rounded-3xl shadow-2xl border border-border overflow-hidden">
             <div className="p-6 border-b border-border flex items-center justify-between bg-accent/30">
               <h3 className="text-lg font-bold text-foreground">Log New Issue</h3>
@@ -317,24 +324,14 @@ export default function Tickets() {
             </div>
             
             <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(newTicket); }} className="p-8 space-y-6">
-              <div>
-                <label className="block text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2">Asset Tag</label>
-                <input
-                  type="text"
-                  required
-                  value={newTicket.asset_tag}
-                  onChange={(e) => setNewTicket({...newTicket, asset_tag: e.target.value})}
-                  className="w-full px-4 py-3 bg-accent/20 border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
-                  placeholder="e.g. WS-001"
-                />
-              </div>
+
 
               <div>
                 <label className="block text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2">Issue Type</label>
                 <select
                   value={newTicket.issue_type}
                   onChange={(e) => setNewTicket({...newTicket, issue_type: e.target.value as any})}
-                  className="w-full px-4 py-3 bg-accent/20 border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+                  className="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all text-foreground font-bold"
                 >
                   <option value="H/W">Hardware (H/W)</option>
                   <option value="S/W">Software (S/W)</option>
@@ -348,7 +345,7 @@ export default function Tickets() {
                   rows={4}
                   value={newTicket.issue_description}
                   onChange={(e) => setNewTicket({...newTicket, issue_description: e.target.value})}
-                  className="w-full px-4 py-3 bg-accent/20 border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all resize-none"
+                  className="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all resize-none text-foreground font-bold placeholder:text-slate-400"
                   placeholder="Describe the issue in detail..."
                 />
               </div>
@@ -373,6 +370,6 @@ export default function Tickets() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

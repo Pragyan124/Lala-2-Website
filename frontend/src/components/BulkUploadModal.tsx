@@ -16,6 +16,7 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
   const permittedType = user?.permitted_type || 'ALL';
 
   const [assetType, setAssetType] = useState(permittedType !== 'ALL' ? permittedType : 'MACHINE');
+  const [machineSubtype, setMachineSubtype] = useState('Workstation');
   const [data, setData] = useState<any[]>([]);
   const [fileName, setFileName] = useState('');
   const [error, setError] = useState('');
@@ -45,51 +46,36 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
     if (assetType === 'USER') {
       initialRow = { ...initialRow, username: '', password: '', role: 'USER', division: '', dco: 'Guwahati' };
     } else if (assetType === 'MACHINE') {
-      initialRow = { 
-        ...initialRow, 
-        asset_tag: '', 
+      initialRow = {
+        ...initialRow,
+        asset_tag: `AUTO-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         subtype: 'Workstation',
         switch_type: '',
-        manufacturer: '', 
-        model_name: '', 
-        cpu_serial: '', 
+        manufacturer: '',
+        model_name: 'Generic',
+        cpu_serial: '',
         processor: '',
         ram: '',
         storage: '',
-        monitor_serial: '', 
-        keyboard_serial: '', 
-        mouse_serial: '', 
-        ip_address: '',
-        mac_address: '',
-        vlan: '',
+        monitor_serial: '',
+        keyboard_serial: '',
+        mouse_serial: '',
         location: '',
-        assigned_to: '' 
+        assigned_to: ''
       };
     } else if (assetType === 'NETWORK') {
-      initialRow = { ...initialRow, asset_tag: '', manufacturer: '', model_name: '', ip_address: '', assigned_to: '' };
+      initialRow = { ...initialRow, asset_tag: `AUTO-${Date.now()}-${Math.floor(Math.random() * 1000)}`, manufacturer: '', model_name: 'Generic', ip_address: '', location: '', assigned_to: '' };
     } else if (assetType === 'PRINTER') {
-      initialRow = { ...initialRow, asset_tag: '', manufacturer: '', model_name: '', assigned_to: '', location: '' };
+      initialRow = { ...initialRow, asset_tag: `AUTO-${Date.now()}-${Math.floor(Math.random() * 1000)}`, manufacturer: '', model_name: 'Generic', serial_number: '', assigned_to: '', location: '' };
     } else if (assetType === 'SERVER') {
-      initialRow = { 
-        ...initialRow, 
-        asset_tag: '', 
-        host_name: '', 
-        form_factor: '', 
-        cpu_core_count: '', 
-        ram_capacity: '', 
-        storage_config: '', 
-        ip_address: '', 
-        mac_address: '', 
-        subnet_vlan: '', 
-        gateway_dns: '', 
-        open_ports: '', 
-        os: '', 
-        kernel_version: '', 
-        env_tag: 'Production', 
-        role_service: '',
-        connected_switch: '',
-        connected_router: '',
-        connected_mux: ''
+      initialRow = {
+        ...initialRow,
+        asset_tag: `AUTO-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        manufacturer: '',
+        serial_number: '',
+        os: '',
+        location: '',
+        assigned_to: ''
       };
     }
     setData([initialRow]);
@@ -105,7 +91,7 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
     });
     // Set default role for user if applicable
     if (assetType === 'USER') newRow.role = 'USER';
-    
+
     setData([...data, newRow]);
   };
 
@@ -124,7 +110,7 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const jsonData = XLSX.utils.sheet_to_json(ws);
-        
+
         if (jsonData.length === 0) {
           setError('File is empty.');
           return;
@@ -137,7 +123,15 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
             const normalizedKey = key.trim().toLowerCase().replace(/\s+/g, '_');
             // Don't let Excel data override the selected type
             if (normalizedKey !== 'type') {
-              newRow[normalizedKey] = String(row[key]);
+              let finalKey = normalizedKey;
+              // Map Serial Number back to ip_address for Storage category
+              if (assetType === 'NETWORK' && (normalizedKey === 'serial_number' || normalizedKey === 'sn')) {
+                finalKey = 'ip_address';
+              }
+              if (assetType === 'MACHINE' && machineSubtype === 'UPS' && (normalizedKey === 'serial_number' || normalizedKey === 'sn')) {
+                finalKey = 'cpu_serial';
+              }
+              newRow[finalKey] = String(row[key]);
             }
           }
           return newRow;
@@ -164,7 +158,7 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
   const handleSubmit = () => {
     if (data.length === 0) return;
     setError('');
-    
+
     // Validate required fields
     for (let i = 0; i < data.length; i++) {
       if (assetType === 'USER') {
@@ -175,12 +169,12 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
         }
         data[i].username = username;
       } else {
-        const assetTag = data[i].asset_tag || data[i].assettag || data[i].tag;
-        if (!assetTag) {
-          setError(`Row ${i + 1} is missing required 'asset_tag' field.`);
-          return;
+        if (!data[i].asset_tag) {
+          data[i].asset_tag = `AUTO-${Date.now()}-${i}-${Math.floor(Math.random() * 1000)}`;
         }
-        data[i].asset_tag = assetTag;
+        if (!data[i].model_name) {
+          data[i].model_name = 'Generic';
+        }
       }
     }
 
@@ -188,12 +182,12 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
   };
 
   // Determine columns from the first row's keys
-  const columns = data.length > 0 ? Object.keys(data[0]).filter(k => k !== 'type') : [];
+  const columns = data.length > 0 ? Object.keys(data[0]).filter(k => k !== 'type' && k !== 'asset_tag' && k !== 'model_name') : [];
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-300">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-300">
       <div className="bg-card text-card-foreground rounded-2xl shadow-2xl w-full max-w-6xl flex flex-col max-h-[90vh] overflow-hidden border border-border transition-colors">
-        
+
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-border bg-accent/20 transition-colors">
           <div>
@@ -211,7 +205,7 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
             <div className="max-w-2xl mx-auto space-y-8 py-8">
               <div className="bg-card p-6 rounded-2xl border border-border shadow-sm space-y-4 transition-colors">
                 <label className="block text-sm font-semibold text-muted-foreground">1. Select Data Type</label>
-                <select 
+                <select
                   className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-foreground font-medium disabled:opacity-50"
                   value={assetType}
                   onChange={(e) => setAssetType(e.target.value)}
@@ -220,7 +214,7 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
                   <optgroup label="Assets">
                     {(permittedType === 'ALL' || permittedType === 'MACHINE') && <option value="MACHINE">Machines (Laptops/Desktops)</option>}
                     {(permittedType === 'ALL' || permittedType === 'SERVER') && <option value="SERVER">Servers (Enterprise/Host)</option>}
-                    {(permittedType === 'ALL' || permittedType === 'NETWORK') && <option value="NETWORK">Network Devices (Routers/Switches)</option>}
+                    {(permittedType === 'ALL' || permittedType === 'NETWORK') && <option value="NETWORK">Storage Devices (External Drives/Storage)</option>}
                     {(permittedType === 'ALL' || permittedType === 'PRINTER') && <option value="PRINTER">Printers</option>}
                   </optgroup>
                   {permittedType === 'ALL' && (
@@ -231,6 +225,27 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
                 </select>
               </div>
 
+              {assetType === 'MACHINE' && (
+                <div className="bg-card p-6 rounded-2xl border border-border shadow-sm space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                  <label className="block text-sm font-semibold text-muted-foreground">Select Machine Subtype</label>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {['Workstation', 'UPS', 'Switch', 'Router', 'Mux'].map(sub => (
+                      <button
+                        key={sub}
+                        onClick={() => setMachineSubtype(sub)}
+                        className={`px-4 py-2 text-xs font-bold rounded-lg border transition-all ${
+                          machineSubtype === sub 
+                            ? 'bg-primary text-primary-foreground border-primary shadow-lg shadow-primary/20' 
+                            : 'bg-background text-muted-foreground border-border hover:border-primary/50'
+                        }`}
+                      >
+                        {sub}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="border-2 border-dashed border-border rounded-2xl p-8 text-center hover:bg-accent transition-all group flex flex-col items-center justify-center space-y-4">
                   <div className="p-4 bg-primary/5 rounded-full group-hover:bg-primary/10 transition-colors">
@@ -240,11 +255,11 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
                     <h3 className="text-sm font-bold text-foreground">Upload File</h3>
                     <p className="text-xs text-muted-foreground">Excel or CSV formats</p>
                     <button 
-                      onClick={() => downloadTemplate(assetType)}
+                      onClick={() => downloadTemplate(assetType as any, machineSubtype)}
                       className="text-[10px] font-bold text-primary hover:underline mt-1 flex items-center justify-center"
                     >
                       <Download className="w-3 h-3 mr-1" />
-                      Download Template
+                      Download {assetType === 'MACHINE' ? machineSubtype : assetType} Template
                     </button>
                   </div>
                   <label className="cursor-pointer inline-flex items-center justify-center px-6 py-2.5 text-sm font-bold text-primary-foreground bg-primary rounded-xl hover:bg-primary/90 transition-colors shadow-lg shadow-primary/20">
@@ -261,7 +276,7 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
                     <h3 className="text-sm font-bold text-foreground">Manual Entry</h3>
                     <p className="text-xs text-muted-foreground">Fill in an Excel-like table</p>
                   </div>
-                  <button 
+                  <button
                     onClick={startManualEntry}
                     className="inline-flex items-center justify-center px-6 py-2.5 text-sm font-bold text-green-700 bg-green-100 rounded-xl hover:bg-green-200 transition-colors"
                   >
@@ -269,7 +284,7 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
                   </button>
                 </div>
               </div>
-              
+
               {error && (
                 <div className="flex items-center p-4 bg-destructive/10 text-destructive border border-destructive/20 rounded-xl text-sm transition-colors">
                   <AlertCircle className="w-5 h-5 mr-2 flex-shrink-0" />
@@ -292,14 +307,14 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
                   </div>
                 </div>
                 <div className="flex items-center space-x-3">
-                  <button 
+                  <button
                     onClick={addRow}
                     className="flex items-center px-4 py-2 text-sm font-bold text-primary bg-primary/5 rounded-lg hover:bg-primary/10 transition-colors"
                   >
                     <Plus className="w-4 h-4 mr-2" />
                     Add Row
                   </button>
-                  <button 
+                  <button
                     onClick={() => setData([])}
                     className="text-xs text-muted-foreground hover:text-foreground font-medium px-2 transition-colors"
                   >
@@ -322,7 +337,7 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
                       <th className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider w-12">#</th>
                       {columns.map(col => (
                         <th key={col} className="px-4 py-3 text-left text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                          {col.replace(/_/g, ' ')}
+                          {assetType === 'NETWORK' && col === 'ip_address' ? 'Serial Number' : (assetType === 'MACHINE' && machineSubtype === 'UPS' && col === 'cpu_serial') ? 'Serial Number' : (assetType === 'SERVER' && col === 'serial_number') ? 'Serial Number' : col.replace(/_/g, ' ')}
                         </th>
                       ))}
                       <th className="px-4 py-3 text-right text-xs font-bold text-muted-foreground uppercase tracking-wider w-16"></th>
@@ -334,8 +349,8 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
                         <td className="px-4 py-3 text-xs text-muted-foreground font-medium transition-colors">{rowIndex + 1}</td>
                         {columns.map(col => (
                           <td key={col} className="px-2 py-1">
-                            <input 
-                              type="text" 
+                            <input
+                              type="text"
                               value={row[col] || ''}
                               onChange={(e) => handleCellChange(rowIndex, col, e.target.value)}
                               placeholder="..."
@@ -344,7 +359,7 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
                           </td>
                         ))}
                         <td className="px-4 py-3 text-right">
-                          <button 
+                          <button
                             onClick={() => handleDeleteRow(rowIndex)}
                             className="text-muted-foreground/30 hover:text-destructive transition-colors p-1"
                             title="Remove row"
@@ -368,13 +383,13 @@ export default function BulkUploadModal({ onClose, onSuccess }: BulkUploadModalP
               * Ensure required fields like <strong>{assetType === 'USER' ? 'username' : 'asset_tag'}</strong> are filled.
             </p>
             <div className="flex items-center space-x-3">
-              <button 
+              <button
                 onClick={onClose}
                 className="px-6 py-2.5 text-sm font-bold text-foreground bg-card border border-border rounded-xl hover:bg-accent transition-colors shadow-sm"
               >
                 Cancel
               </button>
-              <button 
+              <button
                 onClick={handleSubmit}
                 disabled={bulkMutation.isPending}
                 className="flex items-center px-8 py-2.5 text-sm font-bold text-primary-foreground bg-primary rounded-xl hover:bg-primary/90 transition-all shadow-lg shadow-primary/20 disabled:opacity-50"

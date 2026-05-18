@@ -2,6 +2,8 @@ import { Router, Response } from 'express';
 import prisma from '../utils/prisma';
 import { authenticate, requireAdmin, AuthRequest } from '../middleware/auth';
 
+
+
 const router = Router();
 router.use(authenticate);
 router.use(requireAdmin);
@@ -33,6 +35,8 @@ router.get('/summary', async (req: AuthRequest, res: Response) => {
       }, {}),
       recent_activity: recentAssets
     });
+
+
   } catch (error) {
     console.error('Report error:', error);
     res.status(500).json({ error: 'Failed to generate summary report' });

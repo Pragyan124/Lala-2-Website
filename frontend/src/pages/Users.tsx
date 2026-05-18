@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
-import { Briefcase, Building, Clock, Upload, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Plus, Edit, Trash2 } from 'lucide-react';
+import { Upload, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Plus, Edit, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { useState, useMemo } from 'react';
 import {
@@ -37,7 +37,8 @@ export default function Users() {
 
   const userStr = sessionStorage.getItem('user');
   const currentUser = userStr ? JSON.parse(userStr) : null;
-  const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPERADMIN';
+  // Super Admin can only view, not edit. Only ADMIN can edit.
+  const isAdmin = currentUser?.role === 'ADMIN';
 
   const { data: users, isLoading } = useQuery({
     queryKey: ['users'],
@@ -151,7 +152,8 @@ export default function Users() {
   });
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <>
+      <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-foreground">User Directory</h1>
         {isAdmin && (
@@ -260,6 +262,7 @@ export default function Users() {
           </>
         )}
       </div>
+      </div>
 
       {isBulkModalOpen && (
         <BulkUploadModal 
@@ -275,6 +278,6 @@ export default function Users() {
           onSuccess={() => queryClient.invalidateQueries({ queryKey: ['users'] })}
         />
       )}
-    </div>
+    </>
   );
 }

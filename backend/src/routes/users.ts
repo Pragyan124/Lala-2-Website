@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import prisma from '../utils/prisma';
 import { authenticate, requireAdmin, AuthRequest } from '../middleware/auth';
+import { encodePassword } from '../utils/encoding';
+
+
 
 const router = Router();
 
@@ -22,6 +25,8 @@ router.get('/', authenticate, async (req, res) => {
       created_at: u.created_at,
       creator_name: u.creator?.username || 'System'
     }));
+
+
     res.json(formatted);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch users' });
@@ -44,9 +49,9 @@ router.post('/bulk', authenticate, requireAdmin, async (req: AuthRequest, res) =
         
         const requestedRole = item.role?.toUpperCase() === 'ADMIN' ? 'ADMIN' : (item.role?.toUpperCase() === 'SUPERADMIN' ? 'SUPERADMIN' : 'USER');
         
-        // Role restriction: Only SUPERADMIN can create ADMIN or SUPERADMIN
+        // Role restriction: Only ADMIN can create ADMIN or SUPERADMIN (since SUPERADMIN is view-only)
         const requesterRole = (req as any).user?.role?.toUpperCase();
-        const roleToAssign = (requestedRole === 'ADMIN' || requestedRole === 'SUPERADMIN') && requesterRole !== 'SUPERADMIN' ? 'USER' : requestedRole;
+        const roleToAssign = (requestedRole === 'ADMIN' || requestedRole === 'SUPERADMIN') && requesterRole !== 'ADMIN' ? 'USER' : requestedRole;
 
         const newUser = await tx.user.upsert({
           where: { username: item.username },
@@ -59,7 +64,7 @@ router.post('/bulk', authenticate, requireAdmin, async (req: AuthRequest, res) =
           },
           create: {
             username: item.username,
-            password: item.password || item.username,
+            password: encodePassword(item.password || item.username),
             role: roleToAssign,
             division: item.division || null,
             dco: item.dco || 'Guwahati',
@@ -67,6 +72,8 @@ router.post('/bulk', authenticate, requireAdmin, async (req: AuthRequest, res) =
             created_by_name: req.user?.username,
           }
         });
+
+
         createdUsers.push(newUser);
       }
       return createdUsers;
@@ -93,8 +100,8 @@ router.put('/:id', authenticate, requireAdmin, async (req: AuthRequest, res) => 
     
     let finalRole = currentTarget?.role;
     if (requestedRole && requestedRole !== currentTarget?.role) {
-      if ((requestedRole === 'ADMIN' || requestedRole === 'SUPERADMIN') && requesterRole !== 'SUPERADMIN') {
-        return res.status(403).json({ error: 'Only SuperAdmins can promote users to administrative roles' });
+      if ((requestedRole === 'ADMIN' || requestedRole === 'SUPERADMIN') && requesterRole !== 'ADMIN') {
+        return res.status(403).json({ error: 'Only Admins can promote users to administrative roles' });
       }
       finalRole = requestedRole;
     }
@@ -111,6 +118,8 @@ router.put('/:id', authenticate, requireAdmin, async (req: AuthRequest, res) => 
         modified_by_name: req.user?.username,
       }
     });
+
+
 
     res.json(updated);
   } catch (error) {

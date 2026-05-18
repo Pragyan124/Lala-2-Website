@@ -6,33 +6,35 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function downloadTemplate(type: 'MACHINE' | 'NETWORK' | 'PRINTER' | 'SERVER' | 'USER') {
+export function downloadTemplate(type: 'MACHINE' | 'NETWORK' | 'PRINTER' | 'SERVER' | 'USER', subtype?: string) {
   let headers: string[] = [];
   let fileName = '';
 
   switch (type) {
     case 'MACHINE':
-      headers = [
-        'asset_tag', 'subtype', 'switch_type', 'manufacturer', 'model_name', 
-        'cpu_serial', 'monitor_serial', 'keyboard_serial', 'mouse_serial', 
-        'processor', 'ram', 'storage', 'ip_address', 'mac_address', 'vlan', 'location'
-      ];
-      fileName = 'Machine_Template.xlsx';
+      if (subtype === 'UPS' || subtype === 'Switch' || subtype === 'Router' || subtype === 'Mux') {
+        headers = ['subtype', 'switch_type', 'manufacturer', 'serial_number', 'location', 'assigned_to'];
+        fileName = `${subtype}_Template.xlsx`;
+      } else {
+        // Default to Workstation
+        headers = [
+          'manufacturer', 
+          'cpu_serial', 'monitor_serial', 'keyboard_serial', 'mouse_serial', 
+          'processor', 'ram', 'storage', 'location', 'assigned_to'
+        ];
+        fileName = 'Workstation_Template.xlsx';
+      }
       break;
     case 'NETWORK':
-      headers = ['asset_tag', 'manufacturer', 'model_name', 'ip_address', 'mac_address', 'vlan', 'location'];
-      fileName = 'Network_Template.xlsx';
+      headers = ['manufacturer', 'serial_number', 'location', 'assigned_to'];
+      fileName = 'Storage_Template.xlsx';
       break;
     case 'PRINTER':
-      headers = ['asset_tag', 'manufacturer', 'model_name', 'assigned_to'];
+      headers = ['manufacturer', 'serial_number', 'assigned_to'];
       fileName = 'Printer_Template.xlsx';
       break;
     case 'SERVER':
-      headers = [
-        'asset_tag', 'host_name', 'form_factor', 'cpu_core_count', 'ram_capacity', 
-        'storage_config', 'ip_address', 'mac_address', 'subnet_vlan', 'gateway_dns', 
-        'open_ports', 'os', 'kernel_version', 'env_tag', 'role_service'
-      ];
+      headers = ['manufacturer', 'serial_number', 'os', 'location', 'assigned_to'];
       fileName = 'Server_Template.xlsx';
       break;
     case 'USER':

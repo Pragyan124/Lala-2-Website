@@ -1,7 +1,10 @@
 import dotenv from 'dotenv';
 dotenv.config();
+// Force reload to pick up new routes
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
 import authRoutes from './routes/auth';
 import assetRoutes from './routes/assets';
 import userRoutes from './routes/users';
@@ -11,6 +14,13 @@ import ticketRoutes from './routes/tickets';
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Ensure uploads directory exists
+const uploadDir = path.join(__dirname, '../uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+app.use('/uploads', express.static(uploadDir));
 
 // Global request logger
 app.use((req, res, next) => {

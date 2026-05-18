@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import prisma from '../utils/prisma';
 
+
+
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey';
 
 export interface AuthRequest extends Request {
@@ -29,10 +31,13 @@ export const requireAdmin = async (req: AuthRequest, res: Response, next: NextFu
     const user = await prisma.user.findUnique({ where: { user_id: userId } });
     const role = user?.role?.toUpperCase();
     
-    if (role !== 'ADMIN' && role !== 'SUPERADMIN') {
-      console.log(`Forbidden: User ${user?.username} has role ${user?.role}, expected ADMIN or SUPERADMIN`);
-      return res.status(403).json({ error: 'Forbidden' });
+    // SUPERADMIN is now view-only, so only ADMIN can perform administrative edits.
+    if (role !== 'ADMIN') {
+      console.log(`Forbidden: User ${user?.username} has role ${user?.role}, expected ADMIN for modification access.`);
+      return res.status(403).json({ error: 'Forbidden: View-only role cannot perform this action.' });
     }
+
+
     
     next();
   } catch (error) {
@@ -67,14 +72,16 @@ export const requireInventoryAccess = async (req: AuthRequest, res: Response, ne
     const permittedType = (user?.permitted_type || '').toUpperCase();
     
 
-    // Admin/SuperAdmin always have access
-    // Users with a specific permitted_type (not 'ALL' or 'NONE') have access to modify their type
-    if (role === 'ADMIN' || role === 'SUPERADMIN' || (permittedType !== 'ALL' && permittedType !== 'NONE' && permittedType !== '')) {
+    // Only ADMIN has full modification access. 
+    // SUPERADMIN is now view-only and should not pass this check for write operations.
+    if (role === 'ADMIN' || (permittedType !== 'ALL' && permittedType !== 'NONE' && permittedType !== '')) {
       return next();
     }
     
-    console.log(`Forbidden: User ${user?.username} does not have inventory modification access.`);
-    return res.status(403).json({ error: 'Forbidden' });
+    console.log(`Forbidden: User ${user?.username} (Role: ${role}) does not have inventory modification access.`);
+    return res.status(403).json({ error: 'Forbidden: Modification access denied for this role.' });
+
+
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }

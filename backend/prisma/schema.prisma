@@ -43,6 +43,8 @@ model Inventory {
   created_by   Int?
   created_by_name String?
   created_at   DateTime  @default(now())
+  modified_at  DateTime  @default(now()) @updatedAt
+  bill_url     String?   
   
   creator      User?     @relation("InventoryCreator", fields: [created_by], references: [user_id], onDelete: SetNull)
 
@@ -83,6 +85,7 @@ model Machine {
   
   created_by      Int?
   created_at      DateTime  @default(now())
+  modified_at     DateTime  @default(now()) @updatedAt
   creator         User?     @relation("MachineCreator", fields: [created_by], references: [user_id], onDelete: SetNull)
 }
 
@@ -99,6 +102,7 @@ model Network {
   
   created_by      Int?
   created_at      DateTime  @default(now())
+  modified_at     DateTime  @default(now()) @updatedAt
   creator         User?     @relation("NetworkCreator", fields: [created_by], references: [user_id], onDelete: SetNull)
 }
 
@@ -110,11 +114,13 @@ model Printer {
   asset_tag       String    @unique
   manufacturer    String
   model_name      String
+  serial_number   String?
   assigned_to     String?
   location        String?
   
   created_by      Int?
   created_at      DateTime  @default(now())
+  modified_at     DateTime  @default(now()) @updatedAt
   creator         User?     @relation("PrinterCreator", fields: [created_by], references: [user_id], onDelete: SetNull)
 }
 
@@ -125,28 +131,31 @@ model Server {
   
   asset_tag       String    @unique
   
-  // Hardware
-  host_name       String
-  form_factor     String?   // Blade, Rack-mounted (1U, 2U, etc.), Tower
+  // New Simple Schema
+  manufacturer    String?
+  serial_number   String?
+  os              String?
+  location        String?
+  assigned_to     String?
+
+  // Legacy fields (optional to keep for compatibility, but we will focus on the above)
+  host_name       String?
+  form_factor     String?   
   cpu_core_count  String?
   ram_capacity    String?
   storage_config  String?
-  
-  // Network
   ip_address      String?
   mac_address     String?
   subnet_vlan     String?
   gateway_dns     String?
   open_ports      String?
-  
-  // Software
-  os              String?
   kernel_version  String?
-  env_tag         String?   // Production, Staging, Development
-  role_service    String?   // e.g. Database, Web Server, Active Directory
+  env_tag         String?   
+  role_service    String?   
   
   created_by      Int?
   created_at      DateTime  @default(now())
+  modified_at     DateTime  @default(now()) @updatedAt
   creator         User?     @relation("ServerCreator", fields: [created_by], references: [user_id], onDelete: SetNull)
 }
 
@@ -157,6 +166,7 @@ model Ticket {
   issue_type        String    // H/W or S/W
   status            String    @default("Open") // Open, In Progress, Closed
   created_at        DateTime  @default(now())
+  modified_at       DateTime  @default(now()) @updatedAt
   resolved_at       DateTime?
   
   created_by        Int

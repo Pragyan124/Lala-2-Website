@@ -7,12 +7,12 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
 import { format, subDays, isSameDay } from 'date-fns';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 
 export default function Dashboard() {
   const queryClient = useQueryClient();
   const [selectedTicket, setSelectedTicket] = useState<any>(null);
-  
+
   const { data: user } = useQuery({
     queryKey: ['me'],
     queryFn: async () => {
@@ -22,10 +22,12 @@ export default function Dashboard() {
   });
 
   const sessionUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+  // Only ADMIN has modification rights. SUPERADMIN is view-only.
   const isAdmin = user?.role?.toUpperCase() === 'ADMIN' || 
-                  user?.role?.toUpperCase() === 'SUPERADMIN' || 
-                  sessionUser?.role?.toUpperCase() === 'ADMIN' ||
-                  sessionUser?.role?.toUpperCase() === 'SUPERADMIN';
+                  sessionUser?.role?.toUpperCase() === 'ADMIN';
+  
+  const isSuperAdmin = user?.role?.toUpperCase() === 'SUPERADMIN' ||
+                       sessionUser?.role?.toUpperCase() === 'SUPERADMIN';
 
   console.log('Auth Debug:', { apiRole: user?.role, sessionRole: sessionUser?.role, isAdmin });
 
@@ -46,7 +48,7 @@ export default function Dashboard() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, status }: { id: number, status: string }) => 
+    mutationFn: ({ id, status }: { id: number, status: string }) =>
       api.put(`/tickets/${id}`, { status }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tickets'] });
@@ -79,7 +81,7 @@ export default function Dashboard() {
   const chartData = [
     { name: 'Machines', value: machines, color: '#6366f1' },
     { name: 'Servers', value: servers, color: '#f97316' },
-    { name: 'Network', value: networks, color: '#a855f7' },
+    { name: 'Storage', value: networks, color: '#a855f7' },
     { name: 'Printers', value: printers, color: '#22c55e' },
   ].filter(d => d.value > 0);
 
@@ -101,63 +103,90 @@ export default function Dashboard() {
     };
   });
 
+  const lastSyncTime = useMemo(() => {
+    const allTimes = [
+      ...(assets?.map((a: any) => new Date(a.modified_at).getTime()) || []),
+      ...(tickets?.map((t: any) => new Date(t.modified_at).getTime()) || [])
+    ].filter(t => !isNaN(t));
+    
+    if (allTimes.length === 0) return format(new Date(), 'HH:mm:ss');
+    return format(new Date(Math.max(...allTimes)), 'HH:mm:ss');
+  }, [assets, tickets]);
+
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 pb-10">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground tracking-tight">System Overview</h1>
-          <p className="text-muted-foreground mt-1 text-sm">Real-time inventory statistics and analysis</p>
+    <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-12">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center space-x-2">
+            <div className="w-1.5 h-6 emerald-gradient rounded-full" />
+            <h1 className="text-4xl font-black text-foreground tracking-tighter uppercase">Summary</h1>
+          </div>
+          <p className="text-muted-foreground text-lg font-medium opacity-70">Institutional infrastructure monitoring and performance analysis.</p>
+        </div>
+        <div className="flex items-center space-x-3 text-xs font-black uppercase tracking-[0.2em] text-muted-foreground bg-accent/30 px-4 py-2 rounded-full border border-border/50 backdrop-blur-sm">
+          <Clock className="w-4 h-4 text-primary" />
+          <span>Last DB Update: {lastSyncTime} IST</span>
         </div>
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
-        <Link to="/assets?tab=ALL" className="bg-card p-6 rounded-2xl shadow-sm border border-border flex items-center transform transition-all hover:scale-[1.02] hover:shadow-lg cursor-pointer group transition-colors">
-          <div className="p-4 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 mr-4 group-hover:bg-blue-500/20 transition-colors">
-            <Package className="w-6 h-6" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
+        <Link to="/assets?tab=ALL" className="group relative overflow-hidden bg-card p-7 rounded-[2rem] border border-border/50 shadow-sm transition-all duration-500 hover:-translate-y-2 hover:shadow-2xl hover:shadow-primary/10">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150 duration-700" />
+          <div className="p-4 rounded-2xl bg-primary/10 text-primary mb-6 w-fit group-hover:emerald-gradient group-hover:text-white transition-all duration-500 shadow-inner">
+            <Package className="w-7 h-7" />
           </div>
-          <div>
-            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Total Items</p>
-            <p className="text-3xl font-bold text-foreground mt-0.5">{total}</p>
-          </div>
-        </Link>
-        <Link to="/assets?tab=MACHINE" className="bg-card p-6 rounded-2xl shadow-sm border border-border flex items-center transform transition-all hover:scale-[1.02] hover:shadow-lg cursor-pointer group transition-colors">
-          <div className="p-4 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 mr-4 group-hover:bg-indigo-500/20 transition-colors">
-            <Monitor className="w-6 h-6" />
-          </div>
-          <div>
-            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Machines</p>
-            <p className="text-3xl font-bold text-foreground mt-0.5">{machines}</p>
+          <div className="relative z-10">
+            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] mb-1">Global Assets</p>
+            <p className="text-4xl font-black text-foreground tracking-tighter">{total}</p>
           </div>
         </Link>
-        <Link to="/assets?tab=SERVER" className="bg-card p-6 rounded-2xl shadow-sm border border-border flex items-center transform transition-all hover:scale-[1.02] hover:shadow-lg cursor-pointer group transition-colors">
-          <div className="p-4 rounded-xl bg-orange-500/10 text-orange-600 dark:text-orange-400 mr-4 group-hover:bg-orange-500/20 transition-colors">
-            <ServerIcon className="w-6 h-6" />
+
+        <Link to="/assets?tab=MACHINE" className="group relative overflow-hidden bg-card p-7 rounded-[2rem] border border-border/50 shadow-sm transition-all duration-500 hover:-translate-y-2 hover:shadow-2xl hover:shadow-indigo-500/10">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150 duration-700" />
+          <div className="p-4 rounded-2xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 mb-6 w-fit group-hover:bg-indigo-600 group-hover:text-white transition-all duration-500 shadow-inner">
+            <Monitor className="w-7 h-7" />
           </div>
-          <div>
-            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Servers</p>
-            <p className="text-3xl font-bold text-foreground mt-0.5">{servers}</p>
-          </div>
-        </Link>
-        <Link to="/assets?tab=NETWORK" className="bg-card p-6 rounded-2xl shadow-sm border border-border flex items-center transform transition-all hover:scale-[1.02] hover:shadow-lg cursor-pointer group transition-colors">
-          <div className="p-4 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 mr-4 group-hover:bg-purple-500/20 transition-colors">
-            <Wifi className="w-6 h-6" />
-          </div>
-          <div>
-            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Network</p>
-            <p className="text-3xl font-bold text-foreground mt-0.5">{networks}</p>
+          <div className="relative z-10">
+            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] mb-1">Workstations</p>
+            <p className="text-4xl font-black text-foreground tracking-tighter">{machines}</p>
           </div>
         </Link>
-        <Link to="/assets?tab=PRINTER" className="bg-card p-6 rounded-2xl shadow-sm border border-border flex items-center transform transition-all hover:scale-[1.02] hover:shadow-lg cursor-pointer group transition-colors">
-          <div className="p-4 rounded-xl bg-green-500/10 text-green-600 dark:text-green-400 mr-4 group-hover:bg-green-500/20 transition-colors">
-            <PrinterIcon className="w-5 h-5" />
+
+        <Link to="/assets?tab=SERVER" className="group relative overflow-hidden bg-card p-7 rounded-[2rem] border border-border/50 shadow-sm transition-all duration-500 hover:-translate-y-2 hover:shadow-2xl hover:shadow-orange-500/10">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150 duration-700" />
+          <div className="p-4 rounded-2xl bg-orange-500/10 text-orange-600 dark:text-orange-400 mb-6 w-fit group-hover:bg-orange-600 group-hover:text-white transition-all duration-500 shadow-inner">
+            <ServerIcon className="w-7 h-7" />
           </div>
-          <div>
-            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Printers</p>
-            <p className="text-3xl font-bold text-foreground mt-0.5">{printers}</p>
+          <div className="relative z-10">
+            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] mb-1">Compute Nodes</p>
+            <p className="text-4xl font-black text-foreground tracking-tighter">{servers}</p>
+          </div>
+        </Link>
+
+        <Link to="/assets?tab=NETWORK" className="group relative overflow-hidden bg-card p-7 rounded-[2rem] border border-border/50 shadow-sm transition-all duration-500 hover:-translate-y-2 hover:shadow-2xl hover:shadow-purple-500/10">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150 duration-700" />
+          <div className="p-4 rounded-2xl bg-purple-500/10 text-purple-600 dark:text-purple-400 mb-6 w-fit group-hover:bg-purple-600 group-hover:text-white transition-all duration-500 shadow-inner">
+            <Wifi className="w-7 h-7" />
+          </div>
+          <div className="relative z-10">
+            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] mb-1">Storage Assets</p>
+            <p className="text-4xl font-black text-foreground tracking-tighter">{networks}</p>
+          </div>
+        </Link>
+
+        <Link to="/assets?tab=PRINTER" className="group relative overflow-hidden bg-card p-7 rounded-[2rem] border border-border/50 shadow-sm transition-all duration-500 hover:-translate-y-2 hover:shadow-2xl hover:shadow-emerald-500/10">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150 duration-700" />
+          <div className="p-4 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 mb-6 w-fit group-hover:bg-emerald-600 group-hover:text-white transition-all duration-500 shadow-inner">
+            <PrinterIcon className="w-7 h-7" />
+          </div>
+          <div className="relative z-10">
+            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] mb-1">Printers</p>
+            <p className="text-4xl font-black text-foreground tracking-tighter">{printers}</p>
           </div>
         </Link>
       </div>
+
 
       {/* Machine Breakdown Section */}
       <div className="bg-accent/30 p-6 rounded-3xl border border-border/50">
@@ -235,7 +264,8 @@ export default function Dashboard() {
                 <th className="px-8 py-4 text-left text-xs font-bold text-muted-foreground uppercase">User</th>
                 <th className="px-8 py-4 text-left text-xs font-bold text-muted-foreground uppercase">Type</th>
                 <th className="px-8 py-4 text-left text-xs font-bold text-muted-foreground uppercase">Status & Handling</th>
-                <th className="px-8 py-4 text-right text-xs font-bold text-muted-foreground uppercase">Date</th>
+                <th className="px-8 py-4 text-right text-xs font-bold text-muted-foreground uppercase">Added</th>
+                <th className="px-8 py-4 text-right text-xs font-bold text-muted-foreground uppercase">Modified</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -252,7 +282,7 @@ export default function Dashboard() {
                     <div className="flex items-center space-x-3">
                       {isAdmin ? (
                         <>
-                          <select 
+                          <select
                             value={t.status}
                             onChange={(e) => updateMutation.mutate({ id: t.id, status: e.target.value })}
                             className={`text-[10px] font-bold py-1 px-3 rounded-full border focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer transition-all ${getStatusStyle(t.status)}`}
@@ -261,8 +291,8 @@ export default function Dashboard() {
                             <option value="In Progress">In Progress</option>
                             <option value="Closed">Closed</option>
                           </select>
-                          <button 
-                            onClick={() => { if(confirm('Permanently delete this ticket?')) deleteTicketMutation.mutate(t.id) }}
+                          <button
+                            onClick={() => { if (confirm('Permanently delete this ticket?')) deleteTicketMutation.mutate(t.id) }}
                             className="p-1 text-muted-foreground hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 transition-opacity" title="Delete Ticket"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -275,8 +305,11 @@ export default function Dashboard() {
                       )}
                     </div>
                   </td>
-                  <td className="px-8 py-4 text-right text-xs text-muted-foreground">
-                    {format(new Date(t.created_at), 'MMM d, HH:mm')}
+                  <td className="px-8 py-4 text-right text-xs text-muted-foreground whitespace-nowrap">
+                    {format(new Date(t.created_at), 'MMM d, HH:mm:ss')}
+                  </td>
+                  <td className="px-8 py-4 text-right text-xs text-muted-foreground whitespace-nowrap">
+                    {t.modified_at ? format(new Date(t.modified_at), 'MMM d, HH:mm:ss') : '-'}
                   </td>
                 </tr>
               ))}
@@ -301,7 +334,7 @@ export default function Dashboard() {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            
+
             <div className="p-8 space-y-6">
               <div>
                 <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2">Description</p>
@@ -316,8 +349,12 @@ export default function Dashboard() {
                   <p className="text-sm font-semibold text-foreground">{selectedTicket.username || 'Unknown'}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2 flex items-center"><Calendar className="w-3 h-3 mr-1" /> Date</p>
-                  <p className="text-sm font-semibold text-foreground">{format(new Date(selectedTicket.created_at), 'PPP p')}</p>
+                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2 flex items-center"><Calendar className="w-3 h-3 mr-1" /> Added</p>
+                  <p className="text-sm font-semibold text-foreground">{format(new Date(selectedTicket.created_at), 'PPP HH:mm:ss')}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2 flex items-center"><Clock className="w-3 h-3 mr-1" /> Last Modified</p>
+                  <p className="text-sm font-semibold text-foreground">{selectedTicket.modified_at ? format(new Date(selectedTicket.modified_at), 'PPP HH:mm:ss') : 'Never'}</p>
                 </div>
               </div>
 
@@ -332,11 +369,10 @@ export default function Dashboard() {
                           updateMutation.mutate({ id: selectedTicket.id, status: s });
                           setSelectedTicket({ ...selectedTicket, status: s });
                         }}
-                        className={`flex-1 py-2 px-4 rounded-xl text-xs font-bold transition-all border ${
-                          selectedTicket.status === s 
-                            ? getStatusStyle(s) + ' border-current shadow-sm' 
+                        className={`flex-1 py-2 px-4 rounded-xl text-xs font-bold transition-all border ${selectedTicket.status === s
+                            ? getStatusStyle(s) + ' border-current shadow-sm'
                             : 'bg-accent/50 text-muted-foreground border-transparent hover:bg-accent'
-                        }`}
+                          }`}
                       >
                         {s}
                       </button>
@@ -352,14 +388,14 @@ export default function Dashboard() {
 
             <div className="p-6 bg-accent/30 border-t border-border flex justify-end space-x-3">
               {isAdmin && (
-                <button 
-                  onClick={() => { if(confirm('Permanently delete?')) deleteTicketMutation.mutate(selectedTicket.id) }}
+                <button
+                  onClick={() => { if (confirm('Permanently delete?')) deleteTicketMutation.mutate(selectedTicket.id) }}
                   className="px-6 py-2.5 bg-red-500/10 text-red-600 hover:bg-red-500/20 rounded-xl text-xs font-bold transition-colors flex items-center"
                 >
                   <Trash2 className="w-4 h-4 mr-2" /> Delete
                 </button>
               )}
-              <button 
+              <button
                 onClick={() => setSelectedTicket(null)}
                 className="px-6 py-2.5 bg-foreground text-background hover:opacity-90 rounded-xl text-xs font-bold transition-opacity"
               >

@@ -3,6 +3,8 @@ import prisma from '../utils/prisma';
 import { authenticate, requireAdmin, AuthRequest } from '../middleware/auth';
 import { z } from 'zod';
 
+
+
 const router = Router();
 
 const ticketSchema = z.object({
@@ -39,6 +41,8 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       ...t,
       username: t.creator?.username || 'Unknown'
     }));
+
+
     
     res.json(formatted);
   } catch (error) {
@@ -86,8 +90,10 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
     // For this simple system, let's allow admins and the creator (to close it?).
     const userRole = role?.toUpperCase();
     
-    if (userRole !== 'ADMIN' && userRole !== 'SUPERADMIN' && ticket.created_by !== userId) {
-      return res.status(403).json({ error: 'Forbidden' });
+    // Only ADMIN or the creator can update. 
+    // SUPERADMIN is view-only for all tickets.
+    if (userRole !== 'ADMIN' && ticket.created_by !== userId) {
+      return res.status(403).json({ error: 'Forbidden: Modification access denied for this role.' });
     }
     
     const updatedData: any = { status };
@@ -118,8 +124,9 @@ router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
     const { role } = req.user!;
     const userRole = role?.toUpperCase();
     
-    if (userRole !== 'ADMIN' && userRole !== 'SUPERADMIN') {
-      return res.status(403).json({ error: 'Forbidden' });
+    // Only ADMIN can delete tickets (SUPERADMIN is view-only).
+    if (userRole !== 'ADMIN') {
+      return res.status(403).json({ error: 'Forbidden: Deletion access denied for this role.' });
     }
     
     await prisma.ticket.delete({ where: { id: Number(id) } });
